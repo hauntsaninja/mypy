@@ -13,7 +13,7 @@ import re
 import sys
 import types
 import warnings
-from functools import singledispatch
+from functools import lru_cache, singledispatch
 from pathlib import Path
 from typing import Any, Dict, Generic, Iterator, List, Optional, Tuple, TypeVar, Union, cast
 
@@ -233,6 +233,77 @@ def verify_mypyfile(
         )
 
 
+def _verify_inheritance(
+    stub: nodes.TypeInfo, runtime: Type[Any], object_path: List[str]
+) -> Iterator[Error]:
+    # If you want to be strict, just check whether stub_bases == runtime_bases
+    stub_bases = [(t.type.module_name, t.type.name) for t in stub.bases]
+    runtime_bases = [(t.__module__, t.__name__) for t in runtime.__bases__]
+
+    def is_good_base(base: Tuple[str, str]) -> bool:
+        module_name, class_name = base
+        return not (
+            module_name == "typing"  # often substituted for base classes in stubs
+            or "abc" in module_name.split(".")  # same with abstract base classes
+            or module_name == "contextlib"
+            # remove object so if we filter everything out, it's like we inherit from object
+            or (module_name, class_name) == ("builtins", "object")
+        )
+
+    # Various things in stdlib are aliased or shadowed, so only compare class names
+    stub_filtered_bases = [b[1] for b in stub_bases if is_good_base(b)]
+    runtime_filtered_bases = [b[1] for b in runtime_bases if is_good_base(b)]
+    if stub_filtered_bases == runtime_filtered_bases:
+        return
+    # These cause nothing but trouble
+    if issubclass(runtime, tuple):
+        return
+
+    # If there are extra steps in the inheritance hierarchy, a check against filtered base classes
+    # can fail, even if the MROs are similar enough that we don't want to raise an error
+    stub_mro = [(t.module_name, t.name) for t in stub.mro]
+    runtime_mro = [(t.__module__, t.__name__) for t in runtime.__mro__]
+
+    def can_skip(base: Tuple[str, str]) -> bool:
+        # Skip the class if it's private or in a private module. Stubs sometimes inherit from
+        # private classes for implementation reasons. Runtime classes can be complicated
+        # and incorrect stub subclassing of private classes isn't a bad false negative.
+        return not is_good_base(base) or base[0].startswith("_") or base[1].startswith("_")
+
+    @lru_cache(maxsize=None)
+    def mro_matches(stub_idx: int = 0, runtime_idx: int = 0) -> bool:
+        """Compare the MROs forgivingly, by allowing skipping of some classes."""
+        if stub_idx == len(stub_mro) and runtime_idx == len(runtime_mro):
+            return True
+        if stub_idx < len(stub_mro) and runtime_idx < len(runtime_mro):
+            if stub_mro[stub_idx][1].lstrip("_") == runtime_mro[runtime_idx][1].lstrip("_"):
+                return mro_matches(stub_idx + 1, runtime_idx + 1)
+        if stub_idx < len(stub_mro) and can_skip(stub_mro[stub_idx]):
+            if mro_matches(stub_idx + 1, runtime_idx):
+                return True
+        if runtime_idx < len(runtime_mro) and can_skip(runtime_mro[runtime_idx]):
+            if mro_matches(stub_idx, runtime_idx + 1):
+                return True
+        return False
+
+    if mro_matches():
+        return
+
+    def types_repr(ts: List[Tuple[str, str]]) -> str:
+        return ", ".join(".".join(t) for t in ts)
+
+    yield Error(
+        object_path,
+        "is inconsistent, base classes and MRO differ. INHERITANCE",
+        stub,
+        runtime,
+        stub_desc="{!r} inherits from {}\n".format(stub, types_repr(stub_bases))
+        + "MRO: {}".format(types_repr(stub_mro)),
+        runtime_desc="{!r} inherits from {}\n".format(runtime, types_repr(runtime_bases))
+        + "MRO: {}".format(types_repr(runtime_mro)),
+    )
+
+
 @verify.register(nodes.TypeInfo)
 def verify_typeinfo(
     stub: nodes.TypeInfo, runtime: MaybeMissing[Type[Any]], object_path: List[str]
@@ -244,7 +315,9 @@ def verify_typeinfo(
         yield Error(object_path, "is not a type", stub, runtime, stub_desc=repr(stub))
         return
 
-    # Check everything already defined in the stub
+
+    yield from _verify_inheritance(stub, runtime, object_path)
+
     to_check = set(stub.names)
     # There's a reasonable case to be made that we should always check all dunders, but it's
     # currently quite noisy. We could turn this into a denylist instead of an allowlist.
@@ -1155,6 +1228,8 @@ def test_stubs(args: argparse.Namespace, use_builtins_fixtures: bool = False) ->
             if args.ignore_missing_stub and error.is_missing_stub():
                 continue
             if args.ignore_positional_only and error.is_positional_only_related():
+                continue
+            if "INHERITANCE" not in error.message:
                 continue
             if error.object_desc in allowlist:
                 allowlist[error.object_desc] = True
