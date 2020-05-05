@@ -138,6 +138,21 @@ class StubtestUnit(unittest.TestCase):
                 runtime="def bad_posonly(flag, /, text): pass",
                 error="bad_posonly",
             )
+            yield Case(
+                stub="def good_posonly2(number: int, /, text: str) -> None: ...",
+                runtime="def good_posonly2(num, /, text): pass",
+                error=None,
+            )
+            yield Case(
+                stub="def good_posonly3(__number: int, /, text: str) -> None: ...",
+                runtime="def good_posonly3(num, /, text): pass",
+                error=None,
+            )
+            yield Case(
+                stub="def bad_posonly2(number: int, /, text: str) -> None: ...",
+                runtime="def bad_posonly2(flag, /, text): pass",
+                error="bad_posonly2",
+            )
         yield Case(
             stub="""
             class BadMethod:
