@@ -840,6 +840,10 @@ def verify_decorator(
 def verify_typealias(
     stub: nodes.TypeAlias, runtime: MaybeMissing[Any], object_path: List[str]
 ) -> Iterator[Error]:
+    if isinstance(runtime, Missing):
+        return
+    if isinstance(stub.target, mypy.types.Instance):
+        yield from verify(stub.target.type, runtime, object_path)
     if False:
         yield None
 
