@@ -544,12 +544,13 @@ def is_protocol_implementation(left: Instance, right: Instance,
             if not subtype:
                 return False
 
-            subtype_is_none = isinstance(subtype, NoneType) or (
-                isinstance(subtype, PartialType) and subtype.type is None
-            )
-            if subtype_is_none and isinstance(supertype, CallableType):
+            if member == "__hash__":
                 # We want __hash__ = None idiom to work even without --strict-optional
-                return False
+                subtype_is_none = isinstance(subtype, NoneType) or (
+                    isinstance(subtype, PartialType) and subtype.type is None
+                )
+                if subtype_is_none and isinstance(supertype, CallableType):
+                    return False
             if not proper_subtype:
                 # Nominal check currently ignores arg names
                 # NOTE: If we ever change this, be sure to also change the call to
