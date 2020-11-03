@@ -26,14 +26,15 @@ jobs:
         run: |
           cd mypy_to_test
           echo "new commit"
-          COMMIT=$(git rev-parse HEAD)
+          COMMIT=$(git rev-parse HEAD~10)
+          OTHER_COMMIT=$(git rev-parse HEAD~15)
           git rev-list --format=%s --max-count=1 $COMMIT
           git checkout -b upstream_master origin/master
           echo "base commit"
           git rev-list --format=%s --max-count=1 upstream_master
           echo ''
           cd ..
-          ( mypy_primer --new $COMMIT --old upstream_master --repo mypy_to_test -o concise | tee diff.txt ) || [ $? -eq 1 ]
+          ( mypy_primer --new $COMMIT --old $OTHER_COMMIT --repo mypy_to_test --mypyc-compile-level 1 -o concise | tee diff.txt ) || [ $? -eq 1 ]
       - name: Post comment
         uses: actions/github-script@v3
         with:
