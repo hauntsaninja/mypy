@@ -3,7 +3,7 @@ name: Run mypy_primer
 on:
   # Only run on PR, since we diff against master
   # pull_request_target gives us access to a write token
-  pull_request_target:
+  push:
 
 jobs:
   mypy_primer:
@@ -14,8 +14,6 @@ jobs:
         with:
           path: mypy_to_test
           fetch-depth: 0
-          # pull_request_target checks out the PR base branch by default
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
       - uses: actions/setup-python@v2
         with:
           python-version: 3.8
@@ -35,7 +33,7 @@ jobs:
           git rev-list --format=%s --max-count=1 upstream_master
           echo ''
           cd ..
-          ( mypy_primer --new $COMMIT --old upstream_master -o concise | tee diff.txt ) || [ $? -eq 1 ]
+          ( mypy_primer --new $COMMIT --old upstream_master --repo mypy_to_test -o concise | tee diff.txt ) || [ $? -eq 1 ]
       - name: Post comment
         uses: actions/github-script@v3
         with:
