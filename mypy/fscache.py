@@ -113,7 +113,6 @@ class FileSystemCache:
             if not stat.S_ISDIR(st.st_mode):
                 return False
         ok = False
-        drive, path = os.path.splitdrive(path)  # Ignore Windows drive name
         path = os.path.normpath(path)
         for root in self.package_root:
             if path.startswith(root):

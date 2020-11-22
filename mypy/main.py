@@ -986,7 +986,7 @@ def process_package_roots(fscache: Optional[FileSystemCache],
             root = os.curdir
         if os.path.relpath(root).split(os.sep)[0] == os.pardir:
             parser.error("Package root cannot be above current directory: %r" % root)
-        root = os.path.normpath(os.path.abspath(root))
+        root = os.path.abspath(root)
         if not root.endswith(os.sep):
             root += os.sep
         package_root.append(root)
