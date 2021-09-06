@@ -370,3 +370,23 @@ if guard(a):
     reveal_type(a)  # N: Revealed type is "__main__.A"
 reveal_type(a)  # N: Revealed type is "__main__.A"
 [builtins fixtures/tuple.pyi]
+
+[case testSubtypeTypeGuard]
+from typing import List
+from typing_extensions import TypeGuard
+
+class Base: ...
+class Foo(Base): ...
+class Bar(Base): ...
+
+def is_foo(item: object) -> TypeGuard[Foo]:
+    return isinstance(item, Foo)
+
+def is_bar(item: object) -> TypeGuard[Bar]:
+    return isinstance(item, Bar)
+
+def foobar(items: List[object]):
+    a: List[Base] = [x for x in items if is_foo(x) or is_bar(x)]
+    b: List[Base] = [x for x in items if is_foo(x)]
+    c: List[Bar] = [x for x in items if is_foo(x)]  # E: List comprehension has incompatible type List[Foo]; expected List[Bar]
+[builtins fixtures/tuple.pyi]
