@@ -276,7 +276,7 @@ class TypeAliasType(Type):
             self.line, self.column)
 
 
-class TypeGuardType(Type):
+class TypeGuardedType(Type):
     """Only used by find_instance_check() etc."""
     def __init__(self, type_guard: Type):
         super().__init__(line=type_guard.line, column=type_guard.column)
@@ -1943,7 +1943,7 @@ def get_proper_type(typ: Optional[Type]) -> Optional[ProperType]:
     """
     if typ is None:
         return None
-    if isinstance(typ, TypeGuardType):
+    if isinstance(typ, TypeGuardedType):
         typ = typ.type_guard
     while isinstance(typ, TypeAliasType):
         typ = typ._expand_once()
