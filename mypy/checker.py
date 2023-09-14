@@ -3201,10 +3201,17 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
             return self.check_subtype(
                 compare_type,
                 base_type,
-                rvalue,
-                message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
-                "expression has type",
-                f'base class "{base.name}" defined the type as',
+                context=rvalue,
+                msg=message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
+                subtype_label="expression has type",
+                supertype_label=f'base class "{base.name}" defined the type as',
+            ) and self.check_subtype(
+                base_type,
+                compare_type,
+                context=rvalue,
+                msg=message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
+                subtype_label=f'base class "{base.name}" defined the type as',
+                supertype_label="expression has type",
             )
         return True
 
