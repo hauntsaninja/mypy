@@ -3198,21 +3198,24 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
                 if base_static and compare_static:
                     lvalue_node.is_staticmethod = True
 
-            return self.check_subtype(
+            ret = self.check_subtype(
                 compare_type,
                 base_type,
                 context=rvalue,
                 msg=message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
                 subtype_label="expression has type",
                 supertype_label=f'base class "{base.name}" defined the type as',
-            ) and self.check_subtype(
-                base_type,
-                compare_type,
-                context=rvalue,
-                msg=message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
-                subtype_label=f'base class "{base.name}" defined the type as',
-                supertype_label="expression has type",
             )
+            if lvalue_type:
+                ret = ret and self.check_subtype(
+                    base_type,
+                    compare_type,
+                    context=rvalue,
+                    msg=message_registry.INCOMPATIBLE_TYPES_IN_ASSIGNMENT,
+                    subtype_label=f'base class "{base.name}" defined the type as',
+                    supertype_label="expression has type",
+                )
+            return ret
         return True
 
     def lvalue_type_from_base(
