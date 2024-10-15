@@ -32,10 +32,16 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 
 from mypy_extensions import mypyc_attr
 
 from mypy.util import hash_digest
+
+
+def is_case_sensitive() -> bool:
+    with tempfile.NamedTemporaryFile(prefix="mypy") as f:
+        return not os.path.exists(f.name.upper())
 
 
 @mypyc_attr(allow_interpreted_subclasses=True)  # for tests
@@ -44,6 +50,7 @@ class FileSystemCache:
         # The package root is not flushed with the caches.
         # It is set by set_package_root() below.
         self.package_root: list[str] = []
+        self.is_case_sensitive = is_case_sensitive()
         self.flush()
 
     def set_package_root(self, package_root: list[str]) -> None:
@@ -196,6 +203,9 @@ class FileSystemCache:
 
         The caller must ensure that prefix is a valid file system prefix of path.
         """
+        if self.is_case_sensitive:
+            return self.isfile(path)
+
         if not self.isfile(path):
             # Fast path
             return False
@@ -222,6 +232,9 @@ class FileSystemCache:
         """Return whether path exists - checking path components in case sensitive
         fashion, up to prefix.
         """
+        if self.is_case_sensitive:
+            return self.exists(path)
+
         if path in self.exists_case_cache:
             return self.exists_case_cache[path]
         head, tail = os.path.split(path)
