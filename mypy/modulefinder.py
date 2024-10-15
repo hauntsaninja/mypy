@@ -197,7 +197,7 @@ class FindModuleCache:
             return None
 
         p = self.source_set.source_modules.get(id, None)
-        if p and self.fscache.isfile(p):
+        if p and self.fscache.isfile_via_scan(p):
             # We need to make sure we still have __init__.py all the way up
             # otherwise we might have false positives compared to slow path
             # in case of deletion of init files, which is covered by some tests.
@@ -205,7 +205,7 @@ class FindModuleCache:
             d = os.path.dirname(p)
             for _ in range(id.count(".")):
                 if not any(
-                    self.fscache.isfile(os.path.join(d, "__init__" + x)) for x in PYTHON_EXTENSIONS
+                    self.fscache.isfile_via_scan(os.path.join(d, "__init__" + x)) for x in PYTHON_EXTENSIONS
                 ):
                     return None
                 d = os.path.dirname(d)
@@ -221,7 +221,7 @@ class FindModuleCache:
 
             basename, ext = os.path.splitext(parent)
             if not any(parent.endswith("__init__" + x) for x in PYTHON_EXTENSIONS) and (
-                ext in PYTHON_EXTENSIONS and not self.fscache.isdir(basename)
+                ext in PYTHON_EXTENSIONS and not self.fscache.isdir_via_scan(basename)
             ):
                 # If we do find such a *module* (and crucially, we don't want a package,
                 # hence the filtering out of __init__ files, and checking for the presence
@@ -250,7 +250,7 @@ class FindModuleCache:
         for pathitem in self.get_toplevel_possibilities(lib_path, components[0]):
             # e.g., '/usr/lib/python3.4/foo/bar'
             dir = os.path.normpath(os.path.join(pathitem, dir_chain))
-            if self.fscache.isdir(dir):
+            if self.fscache.isdir_via_scan(dir):
                 dirs.append((dir, True))
         return dirs
 
@@ -321,14 +321,14 @@ class FindModuleCache:
         dir_path = pkg_dir
         for index, component in enumerate(components):
             dir_path = os.path.join(dir_path, component)
-            if self.fscache.isfile(os.path.join(dir_path, "py.typed")):
+            if self.fscache.isfile_via_scan(os.path.join(dir_path, "py.typed")):
                 return os.path.join(pkg_dir, *components[:-1]), index == 0
             elif not plausible_match and (
-                self.fscache.isdir(dir_path) or self.fscache.isfile(dir_path + ".py")
+                self.fscache.isdir_via_scan(dir_path) or self.fscache.isfile_via_scan(dir_path + ".py")
             ):
                 plausible_match = True
             # If this is not a directory then we can't traverse further into it
-            if not self.fscache.isdir(dir_path):
+            if not self.fscache.isdir_via_scan(dir_path):
                 break
         for i in range(len(components), 0, -1):
             if approved_stub_package_exists(".".join(components[:i])):
@@ -342,7 +342,7 @@ class FindModuleCache:
         path, verify = match
         for i in range(1, len(components)):
             pkg_id = ".".join(components[:-i])
-            if pkg_id not in self.ns_ancestors and self.fscache.isdir(path):
+            if pkg_id not in self.ns_ancestors and self.fscache.isdir_via_scan(path):
                 self.ns_ancestors[pkg_id] = path
             path = os.path.dirname(path)
 
@@ -394,13 +394,9 @@ class FindModuleCache:
         #
         # Thankfully, such cases are efficiently handled by looking up the module path
         # via BuildSourceSet.
-        p = (
-            self.find_module_via_source_set(id)
-            if (self.options is not None and self.options.fast_module_lookup)
-            else None
-        )
-        if p:
-            return p
+        if self.options is not None and self.options.fast_module_lookup:
+            if p := self.find_module_via_source_set(id):
+                return p
 
         # If we're looking for a module like 'foo.bar.baz', it's likely that most of the
         # many elements of lib_path don't even have a subdirectory 'foo/bar'.  Discover
@@ -419,11 +415,11 @@ class FindModuleCache:
         for pkg_dir in self.search_paths.package_path:
             stub_name = components[0] + "-stubs"
             stub_dir = os.path.join(pkg_dir, stub_name)
-            if fscache.isdir(stub_dir):
+            if fscache.isdir_via_scan(stub_dir):
                 stub_typed_file = os.path.join(stub_dir, "py.typed")
                 stub_components = [stub_name] + components[1:]
                 path = os.path.join(pkg_dir, *stub_components[:-1])
-                if fscache.isdir(path):
+                if fscache.isdir_via_scan(path):
                     if fscache.isfile(stub_typed_file):
                         # Stub packages can have a py.typed file, which must include
                         # 'partial\n' to make the package partial
@@ -564,7 +560,7 @@ class FindModuleCache:
         package_path = None
         if is_init_file(module_path):
             package_path = os.path.dirname(module_path)
-        elif self.fscache.isdir(module_path):
+        elif self.fscache.isdir_via_scan(module_path):
             package_path = module_path
         if package_path is None:
             return sources
@@ -587,11 +583,11 @@ class FindModuleCache:
             ):
                 continue
 
-            if self.fscache.isdir(subpath):
+            if self.fscache.isdir_via_scan(subpath):
                 # Only recurse into packages
                 if (self.options and self.options.namespace_packages) or (
-                    self.fscache.isfile(os.path.join(subpath, "__init__.py"))
-                    or self.fscache.isfile(os.path.join(subpath, "__init__.pyi"))
+                    self.fscache.isfile_via_scan(os.path.join(subpath, "__init__.py"))
+                    or self.fscache.isfile_via_scan(os.path.join(subpath, "__init__.pyi"))
                 ):
                     seen.add(name)
                     sources.extend(self.find_modules_recursive(module + "." + name))
@@ -613,7 +609,7 @@ def matches_exclude(
     if not excludes:
         return False
     subpath_str = os.path.relpath(subpath).replace(os.sep, "/")
-    if fscache.isdir(subpath):
+    if fscache.isdir_via_scan(subpath):
         subpath_str += "/"
     for exclude in excludes:
         if re.search(exclude, subpath_str):

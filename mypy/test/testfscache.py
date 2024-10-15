@@ -83,10 +83,9 @@ class TestFileSystemCache(unittest.TestCase):
             assert self.isfile_case(os.path.join(other, "other_dir.py"))
             assert not self.isfile_case(os.path.join(other, "Other_Dir.py"))
             assert not self.isfile_case(os.path.join(other, "bar.py"))
-            if sys.platform in ("win32", "darwin"):
-                # We only check case for directories under our prefix, and since
-                # this path is not under the prefix, case difference is fine.
-                assert self.isfile_case(os.path.join(other, "PKG/other_dir.py"))
+            if sys.platform == "linux":
+                # Note we only guarantee case for directories under our prefix
+                assert not self.isfile_case(os.path.join(other, "PKG/other_dir.py"))
 
     def test_isfile_via_scan(self) -> None:
         assert not self.fscache.isfile_via_scan(".")
