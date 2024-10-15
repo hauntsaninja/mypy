@@ -205,7 +205,7 @@ class FindModuleCache:
             d = os.path.dirname(p)
             for _ in range(id.count(".")):
                 if not any(
-                    self.fscache.isfile_via_scan(os.path.join(d, "__init__" + x)) for x in PYTHON_EXTENSIONS
+                    self.fscache.isfile(os.path.join(d, "__init__" + x)) for x in PYTHON_EXTENSIONS
                 ):
                     return None
                 d = os.path.dirname(d)
@@ -321,14 +321,14 @@ class FindModuleCache:
         dir_path = pkg_dir
         for index, component in enumerate(components):
             dir_path = os.path.join(dir_path, component)
-            if self.fscache.isfile_via_scan(os.path.join(dir_path, "py.typed")):
+            if self.fscache.isfile(os.path.join(dir_path, "py.typed")):
                 return os.path.join(pkg_dir, *components[:-1]), index == 0
             elif not plausible_match and (
-                self.fscache.isdir_via_scan(dir_path) or self.fscache.isfile_via_scan(dir_path + ".py")
+                self.fscache.isdir(dir_path) or self.fscache.isfile(dir_path + ".py")
             ):
                 plausible_match = True
             # If this is not a directory then we can't traverse further into it
-            if not self.fscache.isdir_via_scan(dir_path):
+            if not self.fscache.isdir(dir_path):
                 break
         for i in range(len(components), 0, -1):
             if approved_stub_package_exists(".".join(components[:i])):
@@ -342,7 +342,7 @@ class FindModuleCache:
         path, verify = match
         for i in range(1, len(components)):
             pkg_id = ".".join(components[:-i])
-            if pkg_id not in self.ns_ancestors and self.fscache.isdir_via_scan(path):
+            if pkg_id not in self.ns_ancestors and self.fscache.isdir(path):
                 self.ns_ancestors[pkg_id] = path
             path = os.path.dirname(path)
 
@@ -586,8 +586,8 @@ class FindModuleCache:
             if self.fscache.isdir_via_scan(subpath):
                 # Only recurse into packages
                 if (self.options and self.options.namespace_packages) or (
-                    self.fscache.isfile_via_scan(os.path.join(subpath, "__init__.py"))
-                    or self.fscache.isfile_via_scan(os.path.join(subpath, "__init__.pyi"))
+                    self.fscache.isfile(os.path.join(subpath, "__init__.py"))
+                    or self.fscache.isfile(os.path.join(subpath, "__init__.pyi"))
                 ):
                     seen.add(name)
                     sources.extend(self.find_modules_recursive(module + "." + name))
