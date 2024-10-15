@@ -88,6 +88,27 @@ class TestFileSystemCache(unittest.TestCase):
                 # this path is not under the prefix, case difference is fine.
                 assert self.isfile_case(os.path.join(other, "PKG/other_dir.py"))
 
+    def test_isfile_via_scan(self) -> None:
+        assert not self.fscache.isfile_via_scan(".")
+        assert not self.fscache.isfile_via_scan("./")
+        assert not self.fscache.isfile_via_scan("..")
+        assert not self.fscache.isfile_via_scan("../")
+        assert not self.fscache.isfile_via_scan("/")
+
+    def test_isdir_via_scan(self) -> None:
+        assert self.fscache.isdir_via_scan(".")
+        assert self.fscache.isdir_via_scan("./")
+        assert self.fscache.isdir_via_scan("..")
+        assert self.fscache.isdir_via_scan("../")
+        assert self.fscache.isdir_via_scan("/")
+
+    def test_exists_via_scan(self) -> None:
+        assert self.fscache.exists_via_scan(".")
+        assert self.fscache.exists_via_scan("./")
+        assert self.fscache.exists_via_scan("..")
+        assert self.fscache.exists_via_scan("../")
+        assert self.fscache.exists_via_scan("/")
+
     def make_file(self, path: str, base: str | None = None) -> None:
         if base is None:
             base = self.tempdir

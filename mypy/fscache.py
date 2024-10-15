@@ -53,7 +53,7 @@ class FileSystemCache:
         """Start another transaction and empty all caches."""
         self.stat_or_none_cache: dict[str, os.stat_result | None] = {}
 
-        self.listdir_cache: dict[str, list[str]] = {}
+        self.scan_cache: dict[str, dict[str, os.DirEntry[str]] | None] = {}
         self.listdir_error_cache: dict[str, OSError] = {}
         self.isfile_case_cache: dict[str, bool] = {}
         self.exists_case_cache: dict[str, bool] = {}
@@ -61,6 +61,65 @@ class FileSystemCache:
         self.read_error_cache: dict[str, Exception] = {}
         self.hash_cache: dict[str, str] = {}
         self.fake_package_cache: set[str] = set()
+
+    def _scan(self, path: str) -> dict[str, os.DirEntry[str]] | None:
+        if path in self.scan_cache:
+            return self.scan_cache[path]
+        if not path:
+            path = "."
+        try:
+            results = {entry.name: entry for entry in os.scandir(path)}
+        except OSError:
+            results = None
+        self.scan_cache[path] = results
+        return results
+
+    def exists_via_scan(self, path: str) -> bool:
+        dirname, basename = os.path.split(path)
+        if not basename:
+            # Strip the trailing slash and recurse
+            if dirname == os.sep:
+                return True
+            return self.exists_via_scan(dirname)
+        if not dirname:
+            # Listing the current directory
+            if basename in (".", ".."):
+                return True
+            dirname = ""
+        if (scan := self._scan(dirname)) is None:
+            return False
+        return basename in scan
+
+    def isfile_via_scan(self, path: str) -> bool:
+        # Note this may introduce case sensitivity on case-insensitive filesystems.
+        dirname, basename = os.path.split(path)
+        if not basename:
+            return False
+        if (scan := self._scan(dirname)) is None:
+            return False
+        if (entry := scan.get(basename)) is None:
+            # TODO: init_under_package_root
+            return False
+        return entry.is_file()
+
+    def isdir_via_scan(self, path: str) -> bool:
+        # Note this may introduce case sensitivity on case-insensitive filesystems.
+        dirname, basename = os.path.split(path)
+        if not basename:
+            # Strip the trailing slash and recurse
+            if dirname == os.sep:
+                return True
+            return self.isdir_via_scan(dirname)
+        if not dirname:
+            # Listing the current directory
+            if basename in (".", ".."):
+                return True
+            dirname = ""
+        if (scan := self._scan(dirname)) is None:
+            return False
+        if (entry := scan.get(basename)) is None:
+            return False
+        return entry.is_dir()
 
     def stat_or_none(self, path: str) -> os.stat_result | None:
         if path in self.stat_or_none_cache:
