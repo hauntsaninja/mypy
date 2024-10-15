@@ -215,25 +215,22 @@ class FileSystemCache:
 
     def listdir(self, path: str) -> list[str]:
         path = os.path.normpath(path)
-        if path in self.listdir_cache:
-            res = self.listdir_cache[path]
-            # Check the fake cache.
-            if path in self.fake_package_cache and "__init__.py" not in res:
-                res.append("__init__.py")  # Updates the result as well as the cache
-            return res
-        if path in self.listdir_error_cache:
-            raise copy_os_error(self.listdir_error_cache[path])
-        try:
-            results = os.listdir(path)
-        except OSError as err:
-            # Like above, take a copy to reduce memory use.
-            self.listdir_error_cache[path] = copy_os_error(err)
-            raise err
-        self.listdir_cache[path] = results
-        # Check the fake cache.
-        if path in self.fake_package_cache and "__init__.py" not in results:
-            results.append("__init__.py")
-        return results
+        if (scan := self._scan(path)) is None:
+            if path in self.listdir_error_cache:
+                raise copy_os_error(self.listdir_error_cache[path])
+            try:
+                os.listdir(path)
+            except OSError as err:
+                # Like above, take a copy to reduce memory use.
+                self.listdir_error_cache[path] = copy_os_error(err)
+                raise err
+            else:
+                raise AssertionError
+
+        names = list(scan.keys())
+        if path in self.fake_package_cache and "__init__.py" not in scan:
+            names.append("__init__.py")
+        return names
 
     def isfile(self, path: str) -> bool:
         st = self.stat_or_none(path)
