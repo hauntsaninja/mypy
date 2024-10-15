@@ -252,51 +252,31 @@ class FileSystemCache:
 
         The caller must ensure that prefix is a valid file system prefix of path.
         """
-        if not self.isfile(path):
-            # Fast path
+        if not self.isfile_via_scan(path):
             return False
-        if path in self.isfile_case_cache:
-            return self.isfile_case_cache[path]
-        head, tail = os.path.split(path)
-        if not tail:
-            self.isfile_case_cache[path] = False
-            return False
-        try:
-            names = self.listdir(head)
-            # This allows one to check file name case sensitively in
-            # case-insensitive filesystems.
-            res = tail in names
-        except OSError:
-            res = False
-        if res:
-            # Also recursively check the other path components in case sensitive way.
-            res = self.exists_case(head, prefix)
-        self.isfile_case_cache[path] = res
-        return res
+        while True:
+            path, tail = os.path.split(path)
+            if path == prefix:
+                break
+            if not tail:
+                break
+            if not self.exists_via_scan(path):
+                return False
+        return True
 
     def exists_case(self, path: str, prefix: str) -> bool:
         """Return whether path exists - checking path components in case sensitive
         fashion, up to prefix.
         """
-        if path in self.exists_case_cache:
-            return self.exists_case_cache[path]
-        head, tail = os.path.split(path)
-        if not head.startswith(prefix) or not tail:
-            # Only perform the check for paths under prefix.
-            self.exists_case_cache[path] = True
-            return True
-        try:
-            names = self.listdir(head)
-            # This allows one to check file name case sensitively in
-            # case-insensitive filesystems.
-            res = tail in names
-        except OSError:
-            res = False
-        if res:
-            # Also recursively check other path components.
-            res = self.exists_case(head, prefix)
-        self.exists_case_cache[path] = res
-        return res
+        while True:
+            if not self.exists_via_scan(path):
+                return False
+            if path == prefix:
+                break
+            path, tail = os.path.split(path)
+            if not tail:
+                break
+        return True
 
     def isdir(self, path: str) -> bool:
         st = self.stat_or_none(path)

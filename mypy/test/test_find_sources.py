@@ -17,13 +17,20 @@ class FakeFSCache(FileSystemCache):
     def __init__(self, files: set[str]) -> None:
         self.files = {os.path.abspath(f) for f in files}
 
+    def _scan(self, path: str) -> None:
+        raise NotImplementedError
+
     def isfile(self, file: str) -> bool:
         return file in self.files
+
+    isfile_via_scan = isfile
 
     def isdir(self, dir: str) -> bool:
         if not dir.endswith(os.sep):
             dir += os.sep
         return any(f.startswith(dir) for f in self.files)
+
+    isdir_via_scan = isdir
 
     def listdir(self, dir: str) -> list[str]:
         if not dir.endswith(os.sep):
