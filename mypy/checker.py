@@ -3017,7 +3017,9 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
         # as X | Y.
         if not (s.is_alias_def and self.is_stub):
             with self.enter_final_context(s.is_final_def):
-                self.check_assignment(s.lvalues[-1], s.rvalue, s.type is None, s.new_syntax)
+                self.check_assignment(
+                    s.lvalues[-1], s.rvalue, infer_lvalue_type=True, new_syntax=s.new_syntax
+                )
 
         if s.is_alias_def:
             self.check_type_alias_rvalue(s)
@@ -3045,7 +3047,7 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
             rvalue = self.temp_node(self.lookup_type(s.rvalue), s)
             for lv in s.lvalues[:-1]:
                 with self.enter_final_context(s.is_final_def):
-                    self.check_assignment(lv, rvalue, s.type is None)
+                    self.check_assignment(lv, rvalue, infer_lvalue_type=True)
 
         self.check_final(s)
         if (
