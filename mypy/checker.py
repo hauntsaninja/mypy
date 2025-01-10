@@ -584,14 +584,23 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
         *,
         exit_condition: Expression | None = None,
     ) -> None:
-        """Repeatedly type check a loop body until the frame doesn't change.
-        If exit_condition is set, assume it must be False on exit from the loop.
+        """Repeatedly type check a loop body until the frame doesn't change."""
 
-        Then check the else_body.
-        """
-        # The outer frame accumulates the results of all iterations
+        # The outer frame accumulates the results of all iterations:
         with self.binder.frame_context(can_skip=False, conditional_frame=True):
+
+            # Check for potential decreases in the number of partial types so as not to stop the
+            # iteration too early:
             partials_old = sum(len(pts.map) for pts in self.partial_types)
+
+            # Disable error types that we cannot safely identify in intermediate iteration steps:
+            warn_unreachable = self.options.warn_unreachable
+            if warn_unreachable:
+                self.options.warn_unreachable = False
+            warn_redundant = codes.REDUNDANT_EXPR in self.options.enabled_error_codes
+            if warn_redundant:
+                self.options.enabled_error_codes.remove(codes.REDUNDANT_EXPR)
+
             while True:
                 with self.binder.frame_context(can_skip=True, break_frame=2, continue_frame=1):
                     self.accept(body)
@@ -599,9 +608,21 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
                 if (partials_new == partials_old) and not self.binder.last_pop_changed:
                     break
                 partials_old = partials_new
+
+            # If necessary, reset the modified options and make up for the postponed error checks:
+            if warn_unreachable or warn_redundant:
+                self.options.warn_unreachable = warn_unreachable
+                if warn_redundant:
+                    self.options.enabled_error_codes.add(codes.REDUNDANT_EXPR)
+                with self.binder.frame_context(can_skip=True, break_frame=2, continue_frame=1):
+                    self.accept(body)
+
+            # If exit_condition is set, assume it must be False on exit from the loop:
             if exit_condition:
                 _, else_map = self.find_isinstance_check(exit_condition)
                 self.push_type_map(else_map)
+
+            # Check the else body:
             if else_body:
                 self.accept(else_body)
 
@@ -2985,7 +3006,9 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
         # as X | Y.
         if not (s.is_alias_def and self.is_stub):
             with self.enter_final_context(s.is_final_def):
-                self.check_assignment(s.lvalues[-1], s.rvalue, s.type is None, s.new_syntax)
+                self.check_assignment(
+                    s.lvalues[-1], s.rvalue, infer_lvalue_type=True, new_syntax=s.new_syntax
+                )
 
         if s.is_alias_def:
             self.check_type_alias_rvalue(s)
@@ -3013,7 +3036,7 @@ class TypeChecker(NodeVisitor[None], CheckerPluginInterface):
             rvalue = self.temp_node(self.lookup_type(s.rvalue), s)
             for lv in s.lvalues[:-1]:
                 with self.enter_final_context(s.is_final_def):
-                    self.check_assignment(lv, rvalue, s.type is None)
+                    self.check_assignment(lv, rvalue, infer_lvalue_type=True)
 
         self.check_final(s)
         if (
