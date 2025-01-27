@@ -2179,7 +2179,8 @@ class CallableType(FunctionLike):
         types_suffix = self.arg_types[var_arg_index + 1 :]
         kinds_suffix = self.arg_kinds[var_arg_index + 1 :]
         names_suffix = self.arg_names[var_arg_index + 1 :]
-        no_name: str | None = None  # to silence mypy
+        names_middle: list[str | None]
+        no_name = cast("str | None", None)
 
         # Now we have something non-trivial to do.
         if unpack_index is None:
@@ -3725,12 +3726,6 @@ def find_unpack_in_list(items: Sequence[Type]) -> int | None:
     unpack_index: int | None = None
     for i, item in enumerate(items):
         if isinstance(item, UnpackType):
-            # We cannot fail here, so we must check this in an earlier
-            # semanal phase.
-            # Funky code here avoids mypyc narrowing the type of unpack_index.
-            old_index = unpack_index
-            assert old_index is None
-            # Don't return so that we can also sanity check there is only one.
             unpack_index = i
     return unpack_index
 
