@@ -2095,11 +2095,11 @@ class Z: ...
 x: X
 
 if isinstance(x, (Y, Z)):
-    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "X" and "Y">"
+    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "__main__.X" and "__main__.Y">"
 if isinstance(x, (Y, NoneType)):
-    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "X" and "Y">1"
+    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "__main__.X" and "__main__.Y">"
 if isinstance(x, (Y, Z, NoneType)):
-    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "X" and "Y">2"
+    reveal_type(x)  # N: Revealed type is "__main__.<subclass of "__main__.X" and "__main__.Y">"
 if isinstance(x, (Z, NoneType)):  # E: Subclass of "X" and "Z" cannot exist: "Z" is final \
                                   # E: Subclass of "X" and "NoneType" cannot exist: "NoneType" is final
     reveal_type(x)  # E: Statement is unreachable
@@ -2416,3 +2416,21 @@ while x is not None and b():
     x = f()
 
 [builtins fixtures/primitives.pyi]
+
+[case testNarrowingTypeVarMultiple]
+from typing import TypeVar
+
+class A: ...
+class B: ...
+
+T = TypeVar("T")
+def foo(x: T) -> T:
+    if isinstance(x, A):
+        pass
+    elif isinstance(x, B):
+        pass
+    else:
+        raise
+    reveal_type(x)  # N: Revealed type is "T`-1"
+    return x
+[builtins fixtures/isinstance.pyi]
