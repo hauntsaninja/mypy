@@ -765,7 +765,6 @@ def _parse_converter(
         converter_info.init_type = AnyType(TypeOfAny.from_error)
         return converter_info
 
-    converter_type = get_proper_type(converter_type)
     if isinstance(converter_type, CallableType) and converter_type.arg_types:
         converter_info.init_type = converter_type.arg_types[0]
         if not is_attr_converters_optional:
