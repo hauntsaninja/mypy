@@ -48,7 +48,7 @@ Self: _SpecialForm
 @final
 class TypeAliasType:
     def __init__(
-        self, name: str, value: Any, *, type_params: Tuple[Union[TypeVar, ParamSpec, TypeVarTuple], ...] = ()
+        self, name: str, value: Any, *, type_params: Tuple[object, ...] = ()
     ) -> None: ...
 
 # Fallback type for all typed dicts (does not exist at runtime).
@@ -95,3 +95,7 @@ def override(__arg: _T) -> _T: ...
 def deprecated(__msg: str) -> Callable[[_T], _T]: ...
 
 _FutureFeatureFixture = 0
+
+
+class Buffer(Protocol):  # type: ignore[misc]
+    def __buffer__(self, flags: int, /) -> memoryview: ...

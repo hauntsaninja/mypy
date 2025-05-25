@@ -1,2 +1,2 @@
-version_info = (0, 0, 0, '', 0)
-platform = ''
+version_info: tuple[int, int, int, str, int]
+platform: str
