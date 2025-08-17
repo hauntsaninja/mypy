@@ -175,6 +175,16 @@ def main(
     list([res])  # noqa: C410
 
 
+def _patch_contextlib() -> None:
+    def new_init(self: Any, func: Any, args: Any, kwds: Any) -> None:
+        self.gen = func(*args, **kwds)
+        self.func, self.args, self.kwds = func, args, kwds
+
+    import contextlib
+
+    contextlib._GeneratorContextManagerBase.__init__ = new_init  # type: ignore
+
+
 def run_build(
     sources: list[BuildSource],
     options: Options,
@@ -186,6 +196,8 @@ def run_build(
     formatter = util.FancyFormatter(
         stdout, stderr, options.hide_error_codes, hide_success=bool(options.output)
     )
+
+    _patch_contextlib()
 
     messages = []
     messages_by_file = defaultdict(list)
