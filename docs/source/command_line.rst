@@ -81,6 +81,10 @@ for full details, see :ref:`running-mypy`.
     never recursively discover files with extensions other than ``.py`` or
     ``.pyi``.
 
+.. option:: --exclude-gitignore
+
+    This flag will add everything that matches ``.gitignore`` file(s) to :option:`--exclude`.
+
 
 Optional arguments
 ******************
@@ -368,7 +372,7 @@ definitions or calls.
 
 .. option:: --untyped-calls-exclude
 
-    This flag allows to selectively disable :option:`--disallow-untyped-calls`
+    This flag allows one to selectively disable :option:`--disallow-untyped-calls`
     for functions and methods defined in specific packages, modules, or classes.
     Note that each exclude entry acts as a prefix. For example (assuming there
     are no type annotations for ``third_party_lib`` available):
@@ -556,6 +560,26 @@ potentially problematic or redundant in some way.
     notes, causing mypy to eventually finish with a zero exit code. Features
     are considered deprecated when decorated with ``warnings.deprecated``.
 
+.. option:: --deprecated-calls-exclude
+
+    This flag allows one to selectively disable :ref:`deprecated<code-deprecated>` warnings
+    for functions and methods defined in specific packages, modules, or classes.
+    Note that each exclude entry acts as a prefix. For example (assuming ``foo.A.func`` is deprecated):
+
+    .. code-block:: python
+
+        # mypy --enable-error-code deprecated
+        #      --deprecated-calls-exclude=foo.A
+        import foo
+
+        foo.A().func()  # OK, the deprecated warning is ignored
+
+        # file foo.py
+        from typing_extensions import deprecated
+        class A:
+            @deprecated("Use A.func2 instead")
+            def func(self): pass
+
 .. _miscellaneous-strictness-flags:
 
 Miscellaneous strictness flags
@@ -569,12 +593,58 @@ of the above sections.
     This flag causes mypy to suppress errors caused by not being able to fully
     infer the types of global and class variables.
 
-.. option:: --allow-redefinition
+.. option:: --allow-redefinition-new
 
     By default, mypy won't allow a variable to be redefined with an
-    unrelated type. This flag enables redefinition of a variable with an
+    unrelated type. This *experimental* flag enables the redefinition of
+    unannotated variables with an arbitrary type. You will also need to enable
+    :option:`--local-partial-types <mypy --local-partial-types>`.
+    Example:
+
+    .. code-block:: python
+
+        def maybe_convert(n: int, b: bool) -> int | str:
+            if b:
+                x = str(n)  # Assign "str"
+            else:
+                x = n       # Assign "int"
+            # Type of "x" is "int | str" here.
+            return x
+
+    Without the new flag, mypy only supports inferring optional types
+    (``X | None``) from multiple assignments. With this option enabled,
+    mypy can infer arbitrary union types.
+
+    This also enables an unannotated variable to have different types in different
+    code locations:
+
+    .. code-block:: python
+
+        if check():
+            for x in range(n):
+                # Type of "x" is "int" here.
+                ...
+        else:
+            for x in ['a', 'b']:
+                # Type of "x" is "str" here.
+                ...
+
+    Note: We are planning to turn this flag on by default in a future mypy
+    release, along with :option:`--local-partial-types <mypy --local-partial-types>`.
+    The feature is still experimental, and the semantics may still change.
+
+.. option:: --allow-redefinition
+
+    This is an older variant of
+    :option:`--allow-redefinition-new <mypy --allow-redefinition-new>`.
+    This flag enables redefinition of a variable with an
     arbitrary type *in some contexts*: only redefinitions within the
     same block and nesting depth as the original definition are allowed.
+
+    We have no plans to remove this flag, but we expect that
+    :option:`--allow-redefinition-new <mypy --allow-redefinition-new>`
+    will replace this flag for new use cases eventually.
+
     Example where this can be useful:
 
     .. code-block:: python
@@ -658,8 +728,21 @@ of the above sections.
        if text != b'other bytes':  # Error: non-overlapping equality check!
            ...
 
-       assert text is not None  # OK, check against None is allowed as a special case.
+       assert text is not None  # OK, check against None is allowed
 
+
+.. option:: --strict-equality-for-none
+
+    This flag extends :option:`--strict-equality <mypy --strict-equality>` for checks
+    against ``None``:
+
+    .. code-block:: python
+
+       text: str
+       assert text is not None  # Error: non-overlapping identity check!
+
+    Note that :option:`--strict-equality-for-none <mypy --strict-equality-for-none>`
+    only works in combination with :option:`--strict-equality <mypy --strict-equality>`.
 
 .. option:: --strict-bytes
 
@@ -725,11 +808,30 @@ of the above sections.
 
 .. option:: --strict
 
-    This flag mode enables all optional error checking flags.  You can see the
-    list of flags enabled by strict mode in the full :option:`mypy --help` output.
+    This flag mode enables a defined subset of optional error-checking flags.
+    This subset primarily includes checks for inadvertent type unsoundness (i.e
+    strict will catch type errors as long as intentional methods like type ignore
+    or casting were not used.)
+
+    Note: the :option:`--warn-unreachable` flag
+    is not automatically enabled by the strict flag.
+
+    The strict flag does not take precedence over other strict-related flags.
+    Directly specifying a flag of alternate behavior will override the
+    behavior of strict, regardless of the order in which they are passed.
+    You can see the list of flags enabled by strict mode in the full
+    :option:`mypy --help` output.
 
     Note: the exact list of flags enabled by running :option:`--strict` may change
     over time.
+
+    .. include:: strict_list.rst
+    ..
+        The above file is autogenerated and included during html generation.
+        (That's an include directive, and this is a comment.)
+        It would be fine to generate it at some other time instead,
+        theoretically, but we already had a convenient hook during html gen.
+
 
 .. option:: --disable-error-code
 
@@ -763,6 +865,7 @@ of the above sections.
         # --disable-error-code attr-defined --enable-error-code attr-defined
         x = 'a string'
         x.trim()  # error: "str" has no attribute "trim"  [attr-defined]
+
 
 .. _configuring-error-messages:
 
@@ -854,11 +957,6 @@ in error messages.
     if it seems likely that most of the remaining errors will not be
     useful or they may be overly noisy. If ``N`` is negative, there is
     no limit. The default limit is -1.
-
-.. option:: --force-uppercase-builtins
-
-    Always use ``List`` instead of ``list`` in error messages,
-    even on Python 3.9+.
 
 .. option:: --force-union-syntax
 
@@ -1061,7 +1159,7 @@ format into the specified directory.
 Enabling incomplete/experimental features
 *****************************************
 
-.. option:: --enable-incomplete-feature {PreciseTupleTypes, InlineTypedDict}
+.. option:: --enable-incomplete-feature {PreciseTupleTypes,InlineTypedDict,TypeForm}
 
     Some features may require several mypy releases to implement, for example
     due to their complexity, potential for backwards incompatibility, or
@@ -1113,8 +1211,11 @@ List of currently incomplete/experimental features:
 
   .. code-block:: python
 
-     def test_values() -> {"int": int, "str": str}:
-         return {"int": 42, "str": "test"}
+     def test_values() -> {"width": int, "description": str}:
+         return {"width": 42, "description": "test"}
+
+* ``TypeForm``: this feature enables ``TypeForm``, as described in
+  `PEP 747 – Annotating Type Forms <https://peps.python.org/pep-0747/>_`.
 
 
 Miscellaneous
@@ -1157,11 +1258,17 @@ Miscellaneous
    stub packages were found, they are installed and then another run
    is performed.
 
-.. option:: --junit-xml JUNIT_XML
+.. option:: --junit-xml JUNIT_XML_OUTPUT_FILE
 
     Causes mypy to generate a JUnit XML test result document with
     type checking results. This can make it easier to integrate mypy
     with continuous integration (CI) tools.
+
+.. option:: --junit-format {global,per_file}
+
+    If --junit-xml is set, specifies format.
+    global (default): single test with all errors;
+    per_file: one test entry per file with failures.
 
 .. option:: --find-occurrences CLASS.MEMBER
 

@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from re import Pattern
-from typing import Any, Final, NamedTuple, NoReturn, Union
+from typing import Any, Final, NamedTuple, NoReturn
 from typing_extensions import TypeAlias as _TypeAlias
 
 import pytest
@@ -43,7 +43,7 @@ class DeleteFile(NamedTuple):
     path: str
 
 
-FileOperation: _TypeAlias = Union[UpdateFile, DeleteFile]
+FileOperation: _TypeAlias = UpdateFile | DeleteFile
 
 
 def _file_arg_to_module(filename: str) -> str:
@@ -246,7 +246,7 @@ class DataDrivenTestCase(pytest.Item):
     """Holds parsed data-driven test cases, and handles directory setup and teardown."""
 
     # Override parent member type
-    parent: DataSuiteCollector
+    parent: DataFileCollector
 
     input: list[str]
     output: list[str]  # Output for the first pass
@@ -277,7 +277,7 @@ class DataDrivenTestCase(pytest.Item):
 
     def __init__(
         self,
-        parent: DataSuiteCollector,
+        parent: DataFileCollector,
         suite: DataSuite,
         *,
         file: str,
@@ -291,6 +291,7 @@ class DataDrivenTestCase(pytest.Item):
         data: str,
         line: int,
     ) -> None:
+        assert isinstance(parent, DataFileCollector)
         super().__init__(name, parent)
         self.suite = suite
         self.file = file

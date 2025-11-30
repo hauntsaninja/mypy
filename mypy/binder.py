@@ -3,12 +3,22 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import NamedTuple, Optional, Union
+from typing import NamedTuple
 from typing_extensions import TypeAlias as _TypeAlias
 
 from mypy.erasetype import remove_instance_last_known_values
-from mypy.literals import Key, literal, literal_hash, subkeys
-from mypy.nodes import Expression, IndexExpr, MemberExpr, NameExpr, RefExpr, TypeInfo, Var
+from mypy.literals import Key, extract_var_from_literal_hash, literal, literal_hash, subkeys
+from mypy.nodes import (
+    LITERAL_NO,
+    Expression,
+    IndexExpr,
+    MemberExpr,
+    NameExpr,
+    RefExpr,
+    TypeInfo,
+    Var,
+)
+from mypy.options import Options
 from mypy.subtypes import is_same_type, is_subtype
 from mypy.typeops import make_simplified_union
 from mypy.types import (
@@ -29,7 +39,7 @@ from mypy.types import (
 )
 from mypy.typevars import fill_typevars_with_any
 
-BindableExpression: _TypeAlias = Union[IndexExpr, MemberExpr, NameExpr]
+BindableExpression: _TypeAlias = IndexExpr | MemberExpr | NameExpr
 
 
 class CurrentType(NamedTuple):
@@ -39,14 +49,25 @@ class CurrentType(NamedTuple):
 
 class Frame:
     """A Frame represents a specific point in the execution of a program.
+
     It carries information about the current types of expressions at
     that point, arising either from assignments to those expressions
-    or the result of isinstance checks. It also records whether it is
-    possible to reach that point at all.
+    or the result of isinstance checks and other type narrowing
+    operations. It also records whether it is possible to reach that
+    point at all.
+
+    We add a new frame wherenever there is a new scope or control flow
+    branching.
 
     This information is not copied into a new Frame when it is pushed
     onto the stack, so a given Frame only has information about types
     that were assigned in that frame.
+
+    Expressions are stored in dicts using 'literal hashes' as keys (type
+    "Key"). These are hashable values derived from expression AST nodes
+    (only those that can be narrowed). literal_hash(expr) is used to
+    calculate the hashes. Note that this isn't directly related to literal
+    types -- the concept predates literal types.
     """
 
     def __init__(self, id: int, conditional_frame: bool = False) -> None:
@@ -60,35 +81,35 @@ class Frame:
         return f"Frame({self.id}, {self.types}, {self.unreachable}, {self.conditional_frame})"
 
 
-Assigns = defaultdict[Expression, list[tuple[Type, Optional[Type]]]]
+Assigns = defaultdict[Expression, list[tuple[Type, Type | None]]]
 
 
 class ConditionalTypeBinder:
     """Keep track of conditional types of variables.
 
-    NB: Variables are tracked by literal expression, so it is possible
-    to confuse the binder; for example,
+    NB: Variables are tracked by literal hashes of expressions, so it is
+    possible to confuse the binder when there is aliasing. Example:
 
-    ```
-    class A:
-        a: Union[int, str] = None
-    x = A()
-    lst = [x]
-    reveal_type(x.a)      # Union[int, str]
-    x.a = 1
-    reveal_type(x.a)      # int
-    reveal_type(lst[0].a) # Union[int, str]
-    lst[0].a = 'a'
-    reveal_type(x.a)      # int
-    reveal_type(lst[0].a) # str
-    ```
+        class A:
+            a: int | str
+
+        x = A()
+        lst = [x]
+        reveal_type(x.a)      # int | str
+        x.a = 1
+        reveal_type(x.a)      # int
+        reveal_type(lst[0].a) # int | str
+        lst[0].a = 'a'
+        reveal_type(x.a)      # int
+        reveal_type(lst[0].a) # str
     """
 
     # Stored assignments for situations with tuple/list lvalue and rvalue of union type.
     # This maps an expression to a list of bound types for every item in the union type.
     type_assignments: Assigns | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, options: Options) -> None:
+        # Each frame gets an increasing, distinct id.
         self.next_id = 1
 
         # The stack of frames currently used.  These map
@@ -116,9 +137,19 @@ class ConditionalTypeBinder:
         # Whether the last pop changed the newly top frame on exit
         self.last_pop_changed = False
 
+        # These are used to track control flow in try statements and loops.
         self.try_frames: set[int] = set()
         self.break_frames: list[int] = []
         self.continue_frames: list[int] = []
+
+        # If True, initial assignment to a simple variable (e.g. "x", but not "x.y")
+        # is added to the binder. This allows more precise narrowing and more
+        # flexible inference of variable types (--allow-redefinition-new).
+        self.bind_all = options.allow_redefinition_new
+
+        # This tracks any externally visible changes in binder to invalidate
+        # expression caches when needed.
+        self.version = 0
 
     def _get_id(self) -> int:
         self.next_id += 1
@@ -140,6 +171,7 @@ class ConditionalTypeBinder:
         return f
 
     def _put(self, key: Key, type: Type, from_assignment: bool, index: int = -1) -> None:
+        self.version += 1
         self.frames[index].types[key] = CurrentType(type, from_assignment)
 
     def _get(self, key: Key, index: int = -1) -> CurrentType | None:
@@ -150,7 +182,20 @@ class ConditionalTypeBinder:
                 return self.frames[i].types[key]
         return None
 
+    @classmethod
+    def can_put_directly(cls, expr: Expression) -> bool:
+        """Will `.put()` on this expression be successful?
+
+        This is inlined in `.put()` because the logic is rather hot and must be kept
+        in sync.
+        """
+        return isinstance(expr, (IndexExpr, MemberExpr, NameExpr)) and literal(expr) > LITERAL_NO
+
     def put(self, expr: Expression, typ: Type, *, from_assignment: bool = True) -> None:
+        """Directly set the narrowed type of expression (if it supports it).
+
+        This is used for isinstance() etc. Assignments should go through assign_type().
+        """
         if not isinstance(expr, (IndexExpr, MemberExpr, NameExpr)):
             return
         if not literal(expr):
@@ -163,6 +208,7 @@ class ConditionalTypeBinder:
         self._put(key, typ, from_assignment)
 
     def unreachable(self) -> None:
+        self.version += 1
         self.frames[-1].unreachable = True
 
     def suppress_unreachable_warnings(self) -> None:
@@ -204,18 +250,28 @@ class ConditionalTypeBinder:
         options are the same.
         """
         all_reachable = all(not f.unreachable for f in frames)
-        frames = [f for f in frames if not f.unreachable]
+        if not all_reachable:
+            frames = [f for f in frames if not f.unreachable]
         changed = False
-        keys = {key for f in frames for key in f.types}
-
+        keys = [key for f in frames for key in f.types]
+        if len(keys) > 1:
+            keys = list(set(keys))
         for key in keys:
             current_value = self._get(key)
             resulting_values = [f.types.get(key, current_value) for f in frames]
-            if any(x is None for x in resulting_values):
+            # Keys can be narrowed using two different semantics. The new semantics
+            # is enabled for plain variables when bind_all is true, and it allows
+            # variable types to be widened using subsequent assignments. This is
+            # tricky to support for instance attributes (primarily due to deferrals),
+            # so we don't use it for them.
+            old_semantics = not self.bind_all or extract_var_from_literal_hash(key) is None
+            if old_semantics and any(x is None for x in resulting_values):
                 # We didn't know anything about key before
                 # (current_value must be None), and we still don't
                 # know anything about key in at least one possible frame.
                 continue
+
+            resulting_values = [x for x in resulting_values if x is not None]
 
             if all_reachable and all(
                 x is not None and not x.from_assignment for x in resulting_values
@@ -263,7 +319,11 @@ class ConditionalTypeBinder:
                     # still equivalent to such type).
                     if isinstance(type, UnionType):
                         type = collapse_variadic_union(type)
-                    if isinstance(type, ProperType) and isinstance(type, UnionType):
+                    if (
+                        old_semantics
+                        and isinstance(type, ProperType)
+                        and isinstance(type, UnionType)
+                    ):
                         # Simplify away any extra Any's that were added to the declared
                         # type when popping a frame.
                         simplified = UnionType.make_union(
@@ -314,6 +374,13 @@ class ConditionalTypeBinder:
         self.type_assignments = old_assignments
 
     def assign_type(self, expr: Expression, type: Type, declared_type: Type | None) -> None:
+        """Narrow type of expression through an assignment.
+
+        Do nothing if the expression doesn't support narrowing.
+
+        When not narrowing though an assignment (isinstance() etc.), use put()
+        directly. This omits some special-casing logic for assignments.
+        """
         # We should erase last known value in binder, because if we are using it,
         # it means that the target is not final, and therefore can't hold a literal.
         type = remove_instance_last_known_values(type)
@@ -488,6 +555,11 @@ class ConditionalTypeBinder:
 
 
 def get_declaration(expr: BindableExpression) -> Type | None:
+    """Get the declared or inferred type of a RefExpr expression.
+
+    Return None if there is no type or the expression is not a RefExpr.
+    This can return None if the type hasn't been inferred yet.
+    """
     if isinstance(expr, RefExpr):
         if isinstance(expr.node, Var):
             type = expr.node.type

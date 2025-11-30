@@ -52,7 +52,6 @@ def test_python_evaluation(testcase: DataDrivenTestCase, cache_dir: str) -> None
         "--no-error-summary",
         "--hide-error-codes",
         "--allow-empty-bodies",
-        "--force-uppercase-builtins",
         "--test-env",  # Speeds up some checks
     ]
     interpreter = python3_path
@@ -71,6 +70,9 @@ def test_python_evaluation(testcase: DataDrivenTestCase, cache_dir: str) -> None
                 ):
                     return
         mypy_cmdline.extend(additional_flags)
+
+    if "--no-force-union-syntax" not in mypy_cmdline:
+        mypy_cmdline.append("--force-union-syntax")
 
     # Write the program to a file.
     program = "_" + testcase.name + ".py"
