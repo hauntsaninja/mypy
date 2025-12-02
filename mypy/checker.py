@@ -6676,7 +6676,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 ) and not custom_special_method(t, "__ne__", check_all=False)
 
             is_valid_target = is_exactly_literal_type
-            coerce_only_in_literal_context = True
+            coerce_only_in_literal_context = False
 
             expr_types = [operand_types[i] for i in expr_indices]
             should_narrow_by_identity = all(
