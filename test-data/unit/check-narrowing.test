@@ -3305,3 +3305,23 @@ def f4(number: float, x: Custom | int):
         reveal_type(number)  # N: Revealed type is "builtins.float"
         reveal_type(x)  # N: Revealed type is "__main__.Custom | builtins.int"
 [builtins fixtures/primitives.pyi]
+
+[case testNarrowTypeVarType]
+from typing import TypeVar
+
+T = TypeVar("T")
+
+class A: ...
+
+def foo(X: type[T]) -> T:
+    if X == A:
+        return X()
+    raise
+
+# It could be nice to make these two test cases consistent, but it would be tricky
+# The above case is much more common in real world code
+def bar(X: type[T]) -> T:
+    if X == A:
+        return A()  # E: Incompatible return value type (got "A", expected "T")
+    raise
+[builtins fixtures/type.pyi]
