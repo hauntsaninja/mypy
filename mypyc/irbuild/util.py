@@ -138,7 +138,6 @@ def get_mypyc_attrs(
 
     def set_mypyc_attr(key: str, value: Any, line: int) -> None:
         if key in MYPYC_ATTRS:
-            key = cast(MypycAttr, key)
             attrs[key] = value
             lines[key] = line
         else:
