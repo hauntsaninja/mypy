@@ -6633,7 +6633,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
         if operator in {"is", "is not"}:
             is_target_for_value_narrowing = is_singleton_identity_type
             should_coerce_literals = True
-            should_narrow_by_identity_equality = True
+            expr_types_with_custom_eqs = set()
             enum_comparison_is_ambiguous = False
 
         elif operator in {"==", "!="}:
@@ -6647,17 +6647,10 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     break
 
             expr_types = [operand_types[i] for i in expr_indices]
-            should_narrow_by_identity_equality = not any(map(has_custom_eq_checks, expr_types))
+            expr_types_with_custom_eqs = set(filter(has_custom_eq_checks, expr_types))
             enum_comparison_is_ambiguous = True
         else:
             raise AssertionError
-
-        if not should_narrow_by_identity_equality:
-            # This is a bit of a legacy code path that might be a little unsound since it ignores
-            # custom __eq__. We should see if we can get rid of it in favour of `return {}, {}`
-            return self.refine_away_none_in_comparison(
-                operands, operand_types, expr_indices, narrowable_indices
-            )
 
         value_targets = []
         type_targets = []
@@ -6681,7 +6674,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
             for i in expr_indices:
                 if i not in narrowable_indices:
                     continue
-                expr_type = coerce_to_literal(operand_types[i])
+                original_expr_type = operand_types[i]
+                expr_type = coerce_to_literal(original_expr_type)
                 expr_type = try_expanding_sum_type_to_union(expr_type, None)
                 expr_enum_keys = ambiguous_enum_equality_keys(expr_type)
                 for j, target in value_targets:
@@ -6696,9 +6690,15 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if_map, else_map = conditional_types_to_typemaps(
                         operands[i], *conditional_types(expr_type, [target])
                     )
+                    if original_expr_type in expr_types_with_custom_eqs:
+                        # For value_targets, if the expression has a custom __eq__ method,
+                        # we cannot narrow in the positive case, but we can still narrow in the
+                        # negative case.
+                        # e.g. if (x: CustomEq | None) != None, we can narrow x to CustomEq
+                        if_map = {}
                     partial_type_maps.append((if_map, else_map))
 
-        if type_targets:
+        if type_targets and not expr_types_with_custom_eqs:
             for i in expr_indices:
                 if i not in narrowable_indices:
                     continue
@@ -6710,7 +6710,9 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                         operands[i], *conditional_types(expr_type, [target])
                     )
                     if if_map:
-                        else_map = {}  # this is the big difference compared to the above
+                        # For type_targets, we cannot narrow in the negative case
+                        # e.g. if (x: str | None) != (y: str), we cannot narrow x to None
+                        else_map = {}
                         partial_type_maps.append((if_map, else_map))
 
         exprs_in_type_calls = []
@@ -6929,49 +6931,6 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 type_map[parent_expr] = assigned_type
             return parent_expr
         return expr
-
-    def refine_away_none_in_comparison(
-        self,
-        operands: list[Expression],
-        operand_types: list[Type],
-        chain_indices: list[int],
-        narrowable_operand_indices: AbstractSet[int],
-    ) -> tuple[TypeMap, TypeMap]:
-        """Produces conditional type maps refining away None in an identity/equality chain.
-
-        For more details about what the different arguments mean, see the
-        docstring of 'narrow_type_by_identity_equality' up above.
-        """
-
-        non_optional_types = []
-        for i in chain_indices:
-            typ = operand_types[i]
-            if not is_overlapping_none(typ):
-                non_optional_types.append(typ)
-
-        if_map, else_map = {}, {}
-
-        if not non_optional_types or (len(non_optional_types) != len(chain_indices)):
-
-            # Narrow e.g. `Optional[A] == "x"` or `Optional[A] is "x"` to `A` (which may be
-            # convenient but is strictly not type-safe):
-            for i in narrowable_operand_indices:
-                expr_type = operand_types[i]
-                if not is_overlapping_none(expr_type):
-                    continue
-                if any(is_overlapping_erased_types(expr_type, t) for t in non_optional_types):
-                    if_map[operands[i]] = remove_optional(expr_type)
-
-            # Narrow e.g. `Optional[A] != None` to `A` (which is stricter than the above step and
-            # so type-safe but less convenient, because e.g. `Optional[A] == None` still results
-            # in `Optional[A]`):
-            if any(isinstance(get_proper_type(ot), NoneType) for ot in operand_types):
-                for i in narrowable_operand_indices:
-                    expr_type = operand_types[i]
-                    if is_overlapping_none(expr_type):
-                        else_map[operands[i]] = remove_optional(expr_type)
-
-        return if_map, else_map
 
     def is_len_of_tuple(self, expr: Expression) -> bool:
         """Is this expression a `len(x)` call where x is a tuple or union of tuples?"""
