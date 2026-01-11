@@ -3181,3 +3181,21 @@ def main(y: Any):
         reveal_type(y) # N: Revealed type is "builtins.int"
     else:
         reveal_type(y) # N: Revealed type is "Any"
+
+[case testNarrowingAnyNegativeIntersection]
+from __future__ import annotations
+from typing import Any
+
+class array: ...
+
+def get_result() -> Any: ...
+
+def foo(x: str | array) -> str:
+    result = get_result()
+    if isinstance(result, array):
+        return "asdf"
+    if result is x:
+        reveal_type(result)  # N: Revealed type is "Any"
+        return result
+    raise
+[builtins fixtures/tuple.pyi]
