@@ -2885,6 +2885,23 @@ if hasattr(mod, "y"):
 def __getattr__(attr: str) -> str: ...
 [builtins fixtures/module.pyi]
 
+[case testMultipleHasAttr-xfail]
+# flags: --warn-unreachable
+from __future__ import annotations
+from typing import Any
+
+def len(obj: object) -> Any: ...
+
+def f(x: type | str):
+    if (
+        hasattr(x, "__origin__")
+        and x.__origin__ is list
+        and hasattr(x, "__args__")
+        and len(x.__args__) == 1
+    ):
+        reveal_type(x.__args__[0])  # N: Revealed type is "Any"
+[builtins fixtures/module.pyi]
+
 [case testTypeIsntLostAfterNarrowing]
 from typing import Any
 
