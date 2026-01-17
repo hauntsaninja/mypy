@@ -20,7 +20,6 @@ from mypy.nodes import (
     ArgKind,
     TypeInfo,
 )
-from mypy.type_visitor import ALL_STRATEGY, BoolTypeQuery
 from mypy.types import (
     TUPLE_LIKE_INSTANCE_NAMES,
     AnyType,
@@ -401,7 +400,10 @@ def _infer_constraints(
         # variable if possible. This seems to help with some real-world
         # use cases.
         return any_constraints(
-            [infer_constraints_if_possible(template, a_item, direction) for a_item in actual.items],
+            [
+                infer_constraints_if_possible(template, a_item, direction)
+                for a_item in actual.items
+            ],
             eager=True,
         )
     if direction == SUPERTYPE_OF and isinstance(template, UnionType):
