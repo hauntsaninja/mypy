@@ -726,3 +726,132 @@ def outer_c(arg: Tc) -> None:
     use_int_callable(partial(inner, b=""))  # E: Argument 1 to "use_int_callable" has incompatible type "partial[str]"; expected "Callable[[int], int]" \
                                             # N: "partial[str].__call__" has type "def __call__(__self, *args: Any, **kwargs: Any) -> str"
 [builtins fixtures/tuple.pyi]
+
+
+[case testFunctoolsCache]
+import functools
+from typing import Callable, TypeVar
+
+@functools.cache
+def add_one(x: int) -> int: ...
+
+reveal_type(add_one(5))  # N: Revealed type is "builtins.int"
+add_one("x")
+add_one(1, 2)
+
+add_one.cache_clear()
+reveal_type(add_one.cache_info())  # N: Revealed type is "tuple[builtins.int, builtins.int, builtins.int | None, builtins.int, fallback=functools._CacheInfo]"
+
+@functools.lru_cache
+def complex_sig(x: int, /, y: str, *, z: float = 0.0, **kw: bool) -> str: ...
+
+reveal_type(complex_sig(1, "a"))  # N: Revealed type is "builtins.str"
+complex_sig(1, "a", z=2.5, extra=True)
+complex_sig(x=1, y="a")
+complex_sig(1, y=2)
+complex_sig(1, "a", z="bad")
+
+T = TypeVar("T")
+
+@functools.lru_cache()
+def identity(x: T) -> T: ...
+
+reveal_type(identity(1))  # N: Revealed type is "Any"
+reveal_type(identity("s"))  # N: Revealed type is "Any"
+
+@functools.lru_cache(maxsize=1)
+def identity_factory(x: T) -> Callable[[T], T]: ...
+
+reveal_type(identity_factory(1))  # N: Revealed type is "def (Any) -> Any"
+reveal_type(identity_factory("s"))  # N: Revealed type is "def (Any) -> Any"
+[builtins fixtures/tuple.pyi]
+
+
+[case testFunctoolsCacheMethods]
+import functools
+from typing import TypeVar, Generic
+
+class Counter:
+    @functools.cache
+    def inc(self, step: int) -> int: ...
+
+c = Counter()
+reveal_type(c.inc(1))  # N: Revealed type is "builtins.int"
+c.inc.cache_clear()
+Counter.inc(c, 1)
+c.inc("bad")
+Counter.inc(c, "bad")
+
+T = TypeVar("T")
+
+class Box(Generic[T]):
+    def __init__(self, value: T) -> None: ...
+
+    @functools.cache
+    def get(self) -> T: ...
+
+bi = Box(1)
+bs = Box("s")
+reveal_type(bi.get())  # N: Revealed type is "builtins.int"
+reveal_type(bs.get())  # N: Revealed type is "builtins.str"
+
+class WithClassmethods:
+    @classmethod
+    @functools.cache
+    def cm_first(cls, x: int) -> int: ...
+
+    @functools.cache
+    @classmethod
+    def cache_first(cls, x: int) -> int: ...
+
+reveal_type(WithClassmethods.cm_first(1))  # N: Revealed type is "builtins.int"
+reveal_type(WithClassmethods.cache_first(1))  # N: Revealed type is "builtins.int"
+
+WithClassmethods.cm_first("bad")
+WithClassmethods.cache_first("bad")
+
+WithClassmethods.cm_first.cache_clear()
+WithClassmethods.cache_first.cache_clear()
+
+class WithStaticmethods:
+    @staticmethod
+    @functools.cache
+    def sm_first(x: int) -> int: ...
+
+    @functools.cache
+    @staticmethod
+    def cache_first(x: int) -> int: ...
+
+reveal_type(WithStaticmethods.sm_first(1))  # N: Revealed type is "builtins.int"
+reveal_type(WithStaticmethods.cache_first(1))  # N: Revealed type is "builtins.int"
+WithStaticmethods.sm_first.cache_clear()
+WithStaticmethods.cache_first.cache_clear()
+
+WithStaticmethods.sm_first("bad")
+WithStaticmethods.cache_first("bad")
+[builtins fixtures/classmethod.pyi]
+
+
+[case testFunctoolsCacheWrapped]
+import functools
+
+@functools.cache
+def wrapped(x: int) -> int: ...
+
+reveal_type(wrapped.__wrapped__)  # N: Revealed type is "def (*Any, **Any) -> builtins.int"
+rewrapped = functools.cache(wrapped.__wrapped__)
+reveal_type(rewrapped(1))  # N: Revealed type is "builtins.int"
+[builtins fixtures/tuple.pyi]
+
+
+[case testFunctoolsCacheHashable]
+import functools
+
+class Unhashable:
+    __hash__ = None
+
+@functools.cache
+def takes_unhashable(x: Unhashable) -> int: ...
+
+takes_unhashable(Unhashable())
+[builtins fixtures/tuple.pyi]

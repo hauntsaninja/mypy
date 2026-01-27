@@ -1,4 +1,5 @@
-from typing import Generic, TypeVar, Callable, Any, Mapping, Self, overload
+from typing import Generic, TypeVar, Callable, Any, Mapping, NamedTuple, Protocol, Self, TypedDict, overload
+from collections.abc import Hashable
 
 _T = TypeVar("_T")
 
@@ -39,3 +40,35 @@ class partial(Generic[_T]):
     def __call__(__self, *args: Any, **kwargs: Any) -> _T: ...
 
 def wraps(wrapped: _T) -> partial[_T]: ...
+
+
+class Hashable(Protocol):
+    def __hash__(self) -> int: ...
+
+class _CacheInfo(NamedTuple):
+    hits: int
+    misses: int
+    maxsize: int | None
+    currsize: int
+
+class _CacheParameters(TypedDict):
+    maxsize: int
+    typed: bool
+
+_T_co = TypeVar("_T_co", covariant=True)
+
+class _lru_cache_wrapper(Generic[_T_co]):
+    __wrapped__: Callable[..., _T_co]
+    def __call__(self, *args: Hashable, **kwargs: Hashable) -> _T_co: ...
+    def cache_info(self) -> _CacheInfo: ...
+    def cache_clear(self) -> None: ...
+    def cache_parameters(self) -> _CacheParameters: ...
+    def __copy__(self) -> _lru_cache_wrapper[_T_co]: ...
+    def __deepcopy__(self, memo: Any, /) -> _lru_cache_wrapper[_T_co]: ...
+
+def cache(user_function: Callable[..., _T], /) -> _lru_cache_wrapper[_T]: ...
+
+@overload
+def lru_cache(maxsize: int | None = 128, typed: bool = False) -> Callable[[Callable[..., _T]], _lru_cache_wrapper[_T]]: ...
+@overload
+def lru_cache(maxsize: Callable[..., _T], typed: bool = False) -> _lru_cache_wrapper[_T]: ...
