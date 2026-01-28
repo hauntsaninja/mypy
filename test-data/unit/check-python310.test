@@ -56,6 +56,7 @@ match m:
 -- Value Pattern --
 
 [case testMatchValuePatternNarrows]
+# flags: --warn-unreachable
 import b
 m: object
 
@@ -66,6 +67,7 @@ match m:
 b: int
 
 [case testMatchValuePatternAlreadyNarrower]
+# flags: --warn-unreachable
 import b
 m: bool
 
@@ -76,6 +78,7 @@ match m:
 b: int
 
 [case testMatchValuePatternIntersect]
+# flags: --warn-unreachable
 import b
 
 class A: ...
@@ -83,20 +86,20 @@ m: A
 
 match m:
     case b.b:
-        reveal_type(m)  # N: Revealed type is "__main__.A"
+        reveal_type(m)  # E: Statement is unreachable
 [file b.py]
 class B: ...
 b: B
 
 [case testMatchValuePatternUnreachable]
-# primitives are needed because otherwise mypy doesn't see that int and str are incompatible
+# flags: --warn-unreachable
 import b
 
 m: int
 
 match m:
     case b.b:
-        reveal_type(m)  # N: Revealed type is "builtins.int"
+        reveal_type(m)  # E: Statement is unreachable
 [file b.py]
 b: str
 [builtins fixtures/primitives.pyi]
@@ -2766,7 +2769,7 @@ def x() -> tuple[Literal["test"]]: ...
 
 match x():
     case (x,) if x == "test":  # E: Incompatible types in capture pattern (pattern captures type "Literal['test']", variable has type "Callable[[], tuple[Literal['test']]]")
-        reveal_type(x)  # N: Revealed type is "def () -> tuple[Literal['test']]"
+        reveal_type(x)  # E: Statement is unreachable
     case foo:
         foo
 
@@ -3311,3 +3314,44 @@ def type_object(field_type: type[object]) -> str:
             return "bar"
     return ret
 [builtins fixtures/dict.pyi]
+
+
+[case testMatchFinalClass]
+from typing import final, NoReturn
+
+def assert_never(x: NoReturn) -> NoReturn: ...
+
+class Types:
+
+    @final
+    class A:
+        pass
+
+    @final
+    class B:
+        pass
+
+def foo(cls: type[Types.A | Types.B]) -> None:
+    match cls:
+        case Types.A:
+            reveal_type(cls)  # N: Revealed type is "type[__main__.Types.A]"
+        case Types.B:
+            reveal_type(cls)  # N: Revealed type is "type[__main__.Types.B]"
+        case _:
+            assert_never(cls)
+
+
+class TypeTypes:
+    A: type[Types.A] = Types.A
+    B: type[Types.B] = Types.B
+
+
+def bar(cls: type[Types.A | Types.B]) -> None:
+    match cls:
+        case TypeTypes.A:
+            reveal_type(cls)  # N: Revealed type is "type[__main__.Types.A]"
+        case TypeTypes.B:
+            reveal_type(cls)  # N: Revealed type is "type[__main__.Types.B]"
+        case _:
+            assert_never(cls)
+[builtins fixtures/tuple.pyi]

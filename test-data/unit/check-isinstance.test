@@ -1995,19 +1995,20 @@ else:
 [out]
 
 [case testNarrowTypeAfterInListNonOverlapping]
+# flags: --warn-unreachable
 from typing import List, Optional
 
 x: List[str]
 y: Optional[int]
 
 if y in x:
-    reveal_type(y)  # N: Revealed type is "builtins.int | None"
+    reveal_type(y)  # E: Statement is unreachable
 else:
     reveal_type(y)  # N: Revealed type is "builtins.int | None"
 [builtins fixtures/list.pyi]
-[out]
 
 [case testNarrowTypeAfterInListNested]
+# flags: --warn-unreachable
 from typing import List, Optional, Any
 
 x: Optional[int]
@@ -2017,9 +2018,8 @@ nested_any: List[List[Any]]
 if lst in nested_any:
     reveal_type(lst) # N: Revealed type is "builtins.list[builtins.int]"
 if x in nested_any:
-    reveal_type(x) # N: Revealed type is "builtins.int | None"
+    reveal_type(x) # E: Statement is unreachable
 [builtins fixtures/list.pyi]
-[out]
 
 [case testNarrowTypeAfterInTuple]
 from typing import Optional
@@ -2885,6 +2885,23 @@ if hasattr(mod, "y"):
 def __getattr__(attr: str) -> str: ...
 [builtins fixtures/module.pyi]
 
+[case testMultipleHasAttr-xfail]
+# flags: --warn-unreachable
+from __future__ import annotations
+from typing import Any
+
+def len(obj: object) -> Any: ...
+
+def f(x: type | str):
+    if (
+        hasattr(x, "__origin__")
+        and x.__origin__ is list
+        and hasattr(x, "__args__")
+        and len(x.__args__) == 1
+    ):
+        reveal_type(x.__args__[0])  # N: Revealed type is "Any"
+[builtins fixtures/module.pyi]
+
 [case testTypeIsntLostAfterNarrowing]
 from typing import Any
 
@@ -2912,3 +2929,29 @@ if isinstance(a, B):
     c = a
 
 [builtins fixtures/isinstance.pyi]
+
+[case testIsInstanceTypeAny]
+from typing import Any
+
+def foo(x: object, t: type[Any]):
+    if isinstance(x, t):
+        reveal_type(x)  # N: Revealed type is "Any"
+[builtins fixtures/isinstance.pyi]
+
+[case testIsInstanceUnionTuple]
+# flags: --strict-equality --warn-unreachable
+from typing import Any
+
+def f1(x: object):
+    if isinstance(x, str | (int, dict)):  # E: Argument 2 to "isinstance" has incompatible type "object"; expected "type | tuple[Any, ...]"
+        reveal_type(x)  # N: Revealed type is "builtins.object"
+    if type(x) == str | (int, dict):
+        reveal_type(x)  # N: Revealed type is "builtins.object"
+
+def f2(x: Any):
+    if isinstance(x, str | (int, dict)):  # E: Argument 2 to "isinstance" has incompatible type "object"; expected "type | tuple[Any, ...]"
+        reveal_type(x)  # N: Revealed type is "Any"
+    if type(x) == str | (int, dict):
+        reveal_type(x)  # N: Revealed type is "Any"
+
+[builtins fixtures/primitives.pyi]

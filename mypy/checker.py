@@ -45,7 +45,7 @@ from mypy.errors import (
 from mypy.expandtype import expand_type
 from mypy.literals import Key, extract_var_from_literal_hash, literal, literal_hash
 from mypy.maptype import map_instance_to_supertype
-from mypy.meet import is_overlapping_erased_types, is_overlapping_types, meet_types
+from mypy.meet import is_overlapping_types, meet_types
 from mypy.message_registry import ErrorMessage
 from mypy.messages import (
     SUGGESTED_TEST_FIXTURES,
@@ -6492,10 +6492,13 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 and not is_false_literal(expr)
                 and not is_true_literal(expr)
                 and not self.is_literal_enum(expr)
+                # CallableType type objects are usually already maximally specific
                 and not (
                     isinstance(p_expr := get_proper_type(expr_type), CallableType)
                     and p_expr.is_type_obj()
                 )
+                # This is a little ad hoc, in the absence of intersection types
+                and not (isinstance(p_expr, TypeType) and isinstance(p_expr.item, TypeVarType))
             ):
                 h = literal_hash(expr)
                 if h is not None:
@@ -6557,19 +6560,6 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                             expr_indices=[left_index, right_index],
                             narrowable_indices={0},
                         )
-
-                        # We only try and narrow away 'None' for now
-                        if (
-                            if_map is not None
-                            and is_overlapping_none(item_type)
-                            and not is_overlapping_none(collection_item_type)
-                            and not (
-                                isinstance(collection_item_type, Instance)
-                                and collection_item_type.type.fullname == "builtins.object"
-                            )
-                            and is_overlapping_erased_types(item_type, collection_item_type)
-                        ):
-                            if_map[operands[left_index]] = remove_optional(item_type)
 
                 if right_index in narrowable_operand_index_to_hash:
                     if_type, else_type = self.conditional_types_for_iterable(
@@ -6676,7 +6666,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
         else:
             raise AssertionError
 
-        partial_type_maps = []
+        all_if_maps: list[TypeMap] = []
+        all_else_maps: list[TypeMap] = []
 
         # For each narrowable index, we see what we can narrow based on each relevant target
         for i in expr_indices:
@@ -6687,10 +6678,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 continue
 
             expr_type = operand_types[i]
-            expanded_expr_type = try_expanding_sum_type_to_union(
-                coerce_to_literal(expr_type), None
-            )
             expr_enum_keys = ambiguous_enum_equality_keys(expr_type)
+            expr_type = try_expanding_sum_type_to_union(coerce_to_literal(expr_type), None)
             for j in expr_indices:
                 if i == j:
                     continue
@@ -6706,6 +6695,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     # `x` to `Literal[Foo.A]` iff `Foo` has exactly one member.
                     # See testMatchEnumSingleChoice
                     target_type = coerce_to_literal(target_type)
+                if isinstance(target_type, Instance):
+                    target_type = erase_type(target_type)
 
                 if (
                     # See comments in ambiguous_enum_equality_keys
@@ -6715,24 +6706,18 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     continue
 
                 target = TypeRange(target_type, is_upper_bound=False)
-                is_value_target = is_target_for_value_narrowing(get_proper_type(target_type))
+                if_map, else_map = conditional_types_to_typemaps(
+                    operands[i], *conditional_types(expr_type, [target], ignore_promotions=False)
+                )
 
-                if is_value_target:
-                    if_map, else_map = conditional_types_to_typemaps(
-                        operands[i], *conditional_types(expanded_expr_type, [target])
-                    )
-                    partial_type_maps.append((if_map, else_map))
-                else:
-                    if_map, else_map = conditional_types_to_typemaps(
-                        operands[i], *conditional_types(expr_type, [target])
-                    )
+                all_if_maps.append(if_map)
+                if is_target_for_value_narrowing(get_proper_type(target_type)):
                     # For value targets, it is safe to narrow in the negative case.
                     # e.g. if (x: Literal[5] | None) != (y: Literal[5]), we can narrow x to None
                     # However, for non-value targets, we cannot do this narrowing,
-                    # and so we ignore else_map
+                    # and so we ignore else_map.
                     # e.g. if (x: str | None) != (y: str), we cannot narrow x to None
-                    if if_map:
-                        partial_type_maps.append((if_map, {}))
+                    all_else_maps.append(else_map)
 
         # Handle narrowing for operands with custom __eq__ methods specially
         # In most cases, we won't be able to do any narrowing
@@ -6754,14 +6739,13 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if should_coerce_literals:
                         target_type = coerce_to_literal(target_type)
                     target = TypeRange(target_type, is_upper_bound=False)
-                    is_value_target = is_target_for_value_narrowing(get_proper_type(target_type))
-
-                    if is_value_target:
+                    if is_target_for_value_narrowing(get_proper_type(target_type)):
                         if_map, else_map = conditional_types_to_typemaps(
-                            operands[i], *conditional_types(expr_type, [target])
+                            operands[i],
+                            *conditional_types(expr_type, [target], ignore_promotions=False),
                         )
                         if else_map:
-                            partial_type_maps.append(({}, else_map))
+                            all_else_maps.append(else_map)
                 continue
 
             # If our operand with custom __eq__ is a union, where only some members of the union
@@ -6775,6 +6759,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     # we narrow to in the if_map
                     or_if_maps.append({operands[i]: expr_type})
 
+                expr_type = coerce_to_literal(try_expanding_sum_type_to_union(expr_type, None))
                 for j in expr_indices:
                     if j in custom_eq_indices:
                         continue
@@ -6782,30 +6767,19 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if should_coerce_literals:
                         target_type = coerce_to_literal(target_type)
                     target = TypeRange(target_type, is_upper_bound=False)
-                    is_value_target = is_target_for_value_narrowing(get_proper_type(target_type))
 
-                    if is_value_target:
-                        expr_type = coerce_to_literal(expr_type)
-                        expr_type = try_expanding_sum_type_to_union(expr_type, None)
                     if_map, else_map = conditional_types_to_typemaps(
-                        operands[i], *conditional_types(expr_type, [target], default=expr_type)
+                        operands[i],
+                        *conditional_types(
+                            expr_type, [target], default=expr_type, ignore_promotions=False
+                        ),
                     )
                     or_if_maps.append(if_map)
-                    if is_value_target:
+                    if is_target_for_value_narrowing(get_proper_type(target_type)):
                         or_else_maps.append(else_map)
 
-            final_if_map: TypeMap = {}
-            final_else_map: TypeMap = {}
-            if or_if_maps:
-                final_if_map = or_if_maps[0]
-                for if_map in or_if_maps[1:]:
-                    final_if_map = or_conditional_maps(final_if_map, if_map)
-            if or_else_maps:
-                final_else_map = or_else_maps[0]
-                for else_map in or_else_maps[1:]:
-                    final_else_map = or_conditional_maps(final_else_map, else_map)
-
-            partial_type_maps.append((final_if_map, final_else_map))
+            all_if_maps.append(reduce_or_conditional_type_maps(or_if_maps))
+            all_else_maps.append(reduce_or_conditional_type_maps(or_else_maps))
 
         # Handle narrowing for comparisons that produce additional narrowing, like
         # `type(x) == T` or `x.__class__ is T`
@@ -6826,12 +6800,29 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     continue
                 expr = operands[j]
 
-                current_type_range = self.get_isinstance_type(expr)
+                current_type_range = self.get_isinstance_type(expr, flatten_tuples=False)
+                if current_type_range is None:
+                    current_type_range = []
+                else:
+                    target_type = get_proper_type(
+                        make_simplified_union([tr.item for tr in current_type_range])
+                    )
+                    if isinstance(target_type, AnyType):
+                        # Avoid widening to Any for checks like `type(x) is type(y: Any)`.
+                        continue
+                arg_type = self.lookup_type(expr_in_type_expr)
+                yes_type, no_type = self.conditional_types_with_intersection(
+                    arg_type, current_type_range, expr_in_type_expr
+                )
+                if yes_type is not None and all(
+                    not t.is_upper_bound and not is_equivalent(yes_type, t.item)
+                    for t in current_type_range
+                ):
+                    # type(x) and x.__class__ checks must exact match
+                    yes_type = UninhabitedType()
+
                 if_map, else_map = conditional_types_to_typemaps(
-                    expr_in_type_expr,
-                    *self.conditional_types_with_intersection(
-                        self.lookup_type(expr_in_type_expr), current_type_range, expr_in_type_expr
-                    ),
+                    expr_in_type_expr, yes_type, no_type
                 )
 
                 is_final = (
@@ -6839,13 +6830,16 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if isinstance(expr, RefExpr) and isinstance(expr.node, TypeInfo)
                     else False
                 )
-                if not is_final:
-                    else_map = {}
-                partial_type_maps.append((if_map, else_map))
+                all_if_maps.append(if_map)
+                if is_final:
+                    # We can only narrow `type(x) == T` in the negative case if T is final
+                    all_else_maps.append(else_map)
 
         # We will not have duplicate entries in our type maps if we only have two operands,
         # so we can skip running meets on the intersections
-        return reduce_conditional_maps(partial_type_maps, use_meet=len(operands) > 2)
+        if_map = reduce_and_conditional_type_maps(all_if_maps, use_meet=len(operands) > 2)
+        else_map = reduce_or_conditional_type_maps(all_else_maps)
+        return if_map, else_map
 
     def propagate_up_typemap_info(self, new_types: TypeMap) -> TypeMap:
         """Attempts refining parent expressions of any MemberExpr or IndexExprs in new_types.
@@ -7911,22 +7905,29 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
             return first_item.var.is_settable_property
         return False
 
-    def get_isinstance_type(self, expr: Expression) -> list[TypeRange] | None:
+    def get_isinstance_type(
+        self, expr: Expression, flatten_tuples: bool = True
+    ) -> list[TypeRange] | None:
         """Get the type(s) resulting from an isinstance check.
 
         Returns an empty list for isinstance(x, ()).
         """
         if isinstance(expr, OpExpr) and expr.op == "|":
-            left = self.get_isinstance_type(expr.left)
+            left = self.get_isinstance_type(expr.left, flatten_tuples=False)
             if left is None and is_literal_none(expr.left):
                 left = [TypeRange(NoneType(), is_upper_bound=False)]
-            right = self.get_isinstance_type(expr.right)
+            right = self.get_isinstance_type(expr.right, flatten_tuples=False)
             if right is None and is_literal_none(expr.right):
                 right = [TypeRange(NoneType(), is_upper_bound=False)]
             if left is None or right is None:
                 return None
             return left + right
-        all_types = get_proper_types(flatten_types(self.lookup_type(expr)))
+
+        if flatten_tuples:
+            all_types = get_proper_types(flatten_types_if_tuple(self.lookup_type(expr)))
+        else:
+            all_types = [get_proper_type(self.lookup_type(expr))]
+
         types: list[TypeRange] = []
         for typ in all_types:
             if isinstance(typ, FunctionLike) and typ.is_type_obj():
@@ -8253,6 +8254,7 @@ def conditional_types(
     default: None = None,
     *,
     consider_runtime_isinstance: bool = True,
+    ignore_promotions: bool = True,
 ) -> tuple[Type | None, Type | None]: ...
 
 
@@ -8263,6 +8265,7 @@ def conditional_types(
     default: Type,
     *,
     consider_runtime_isinstance: bool = True,
+    ignore_promotions: bool = True,
 ) -> tuple[Type, Type]: ...
 
 
@@ -8272,6 +8275,7 @@ def conditional_types(
     default: Type | None = None,
     *,
     consider_runtime_isinstance: bool = True,
+    ignore_promotions: bool = True,
 ) -> tuple[Type | None, Type | None]:
     """Takes in the current type and a proposed type of an expression.
 
@@ -8311,6 +8315,7 @@ def conditional_types(
                 proposed_type_ranges,
                 default=union_item,
                 consider_runtime_isinstance=consider_runtime_isinstance,
+                ignore_promotions=ignore_promotions,
             )
             for union_item in get_proper_types(proper_type.items)
         ]
@@ -8330,14 +8335,14 @@ def conditional_types(
         return proposed_type, default
     if not any(type_range.is_upper_bound for type_range in proposed_type_ranges):
         # concrete subtype
-        if is_proper_subtype(current_type, proposed_type, ignore_promotions=True):
+        if is_proper_subtype(current_type, proposed_type, ignore_promotions=ignore_promotions):
             return default, UninhabitedType()
 
         # structural subtypes
         if (
             isinstance(proposed_type, CallableType)
             or (isinstance(proposed_type, Instance) and proposed_type.type.is_protocol)
-        ) and is_subtype(current_type, proposed_type, ignore_promotions=True):
+        ) and is_subtype(current_type, proposed_type, ignore_promotions=ignore_promotions):
             # Note: It's possible that current_type=`Any | Proto` while proposed_type=`Proto`
             #  so we cannot return `Never` for the else branch
             remainder = restrict_subtype_away(
@@ -8346,7 +8351,7 @@ def conditional_types(
                 consider_runtime_isinstance=consider_runtime_isinstance,
             )
             return default, remainder
-    if not is_overlapping_types(current_type, proposed_type, ignore_promotions=True):
+    if not is_overlapping_types(current_type, proposed_type, ignore_promotions=ignore_promotions):
         # Expression is never of any type in proposed_type_ranges
         return UninhabitedType(), default
     # we can only restrict when the type is precise, not bounded
@@ -8481,7 +8486,7 @@ def builtin_item_type(tp: Type) -> Type | None:
     return None
 
 
-def and_conditional_maps(m1: TypeMap, m2: TypeMap, use_meet: bool = False) -> TypeMap:
+def and_conditional_maps(m1: TypeMap, m2: TypeMap, *, use_meet: bool = False) -> TypeMap:
     """Calculate what information we can learn from the truth of (e1 and e2)
     in terms of the information that we can learn from the truth of e1 and
     the truth of e2.
@@ -8514,7 +8519,7 @@ def and_conditional_maps(m1: TypeMap, m2: TypeMap, use_meet: bool = False) -> Ty
     return result
 
 
-def or_conditional_maps(m1: TypeMap, m2: TypeMap, coalesce_any: bool = False) -> TypeMap:
+def or_conditional_maps(m1: TypeMap, m2: TypeMap, *, coalesce_any: bool = False) -> TypeMap:
     """Calculate what information we can learn from the truth of (e1 or e2)
     in terms of the information that we can learn from the truth of e1 and
     the truth of e2. If coalesce_any is True, consider Any a supertype when
@@ -8579,14 +8584,31 @@ def reduce_conditional_maps(
         return final_if_map, final_else_map
 
 
-BUILTINS_CUSTOM_EQ_CHECKS: Final = {
-    "builtins.bytes",
-    "builtins.bytearray",
-    "builtins.memoryview",
-    "builtins.list",
-    "builtins.dict",
-    "builtins.set",
-}
+def reduce_or_conditional_type_maps(ms: list[TypeMap]) -> TypeMap:
+    """Reduces a list of TypeMaps into a single TypeMap by "or"-ing them together."""
+    if len(ms) == 0:
+        return {}
+    if len(ms) == 1:
+        return ms[0]
+    result = ms[0]
+    for m in ms[1:]:
+        result = or_conditional_maps(result, m)
+    return result
+
+
+def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> TypeMap:
+    """Reduces a list of TypeMaps into a single TypeMap by "and"-ing them together."""
+    if len(ms) == 0:
+        return {}
+    if len(ms) == 1:
+        return ms[0]
+    result = ms[0]
+    for m in ms[1:]:
+        result = and_conditional_maps(result, m, use_meet=use_meet)
+    return result
+
+
+BUILTINS_CUSTOM_EQ_CHECKS: Final = {"builtins.bytes", "builtins.bytearray", "builtins.memoryview"}
 
 
 def has_custom_eq_checks(t: Type) -> bool:
@@ -8630,11 +8652,11 @@ def flatten(t: Expression) -> list[Expression]:
         return [t]
 
 
-def flatten_types(t: Type) -> list[Type]:
+def flatten_types_if_tuple(t: Type) -> list[Type]:
     """Flatten a nested sequence of tuples into one list of nodes."""
     t = get_proper_type(t)
     if isinstance(t, TupleType):
-        return [b for a in t.items for b in flatten_types(a)]
+        return [b for a in t.items for b in flatten_types_if_tuple(a)]
     elif is_named_instance(t, "builtins.tuple"):
         return [t.args[0]]
     else:
