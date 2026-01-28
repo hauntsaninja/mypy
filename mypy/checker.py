@@ -6810,11 +6810,19 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if isinstance(target_type, AnyType):
                         # Avoid widening to Any for checks like `type(x) is type(y: Any)`.
                         continue
+                arg_type = self.lookup_type(expr_in_type_expr)
+                yes_type, no_type = self.conditional_types_with_intersection(
+                    arg_type, current_type_range, expr_in_type_expr
+                )
+                if yes_type is not None and all(
+                    not t.is_upper_bound and not is_equivalent(yes_type, t.item)
+                    for t in current_type_range
+                ):
+                    # type(x) and x.__class__ checks must exact match
+                    yes_type = UninhabitedType()
+
                 if_map, else_map = conditional_types_to_typemaps(
-                    expr_in_type_expr,
-                    *self.conditional_types_with_intersection(
-                        self.lookup_type(expr_in_type_expr), current_type_range, expr_in_type_expr
-                    ),
+                    expr_in_type_expr, yes_type, no_type
                 )
 
                 is_final = (
