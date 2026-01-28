@@ -6688,10 +6688,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 continue
 
             expr_type = operand_types[i]
-            expanded_expr_type = try_expanding_sum_type_to_union(
-                coerce_to_literal(expr_type), None
-            )
             expr_enum_keys = ambiguous_enum_equality_keys(expr_type)
+            expr_type = try_expanding_sum_type_to_union(coerce_to_literal(expr_type), None)
             for j in expr_indices:
                 if i == j:
                     continue
@@ -6716,25 +6714,18 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     continue
 
                 target = TypeRange(target_type, is_upper_bound=False)
+                if_map, else_map = conditional_types_to_typemaps(
+                    operands[i], *conditional_types(expr_type, [target], ignore_promotions=False)
+                )
 
+                all_if_maps.append(if_map)
                 if is_target_for_value_narrowing(get_proper_type(target_type)):
-                    if_map, else_map = conditional_types_to_typemaps(
-                        operands[i],
-                        *conditional_types(expanded_expr_type, [target], ignore_promotions=False),
-                    )
-                    all_if_maps.append(if_map)
-                    all_else_maps.append(else_map)
-                else:
-                    if_map, else_map = conditional_types_to_typemaps(
-                        operands[i],
-                        *conditional_types(expr_type, [target], ignore_promotions=False),
-                    )
                     # For value targets, it is safe to narrow in the negative case.
                     # e.g. if (x: Literal[5] | None) != (y: Literal[5]), we can narrow x to None
                     # However, for non-value targets, we cannot do this narrowing,
-                    # and so we ignore else_map
+                    # and so we ignore else_map.
                     # e.g. if (x: str | None) != (y: str), we cannot narrow x to None
-                    all_if_maps.append(if_map)
+                    all_else_maps.append(else_map)
 
         # Handle narrowing for operands with custom __eq__ methods specially
         # In most cases, we won't be able to do any narrowing
@@ -6776,6 +6767,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     # we narrow to in the if_map
                     or_if_maps.append({operands[i]: expr_type})
 
+                expr_type = coerce_to_literal(try_expanding_sum_type_to_union(expr_type, None))
                 for j in expr_indices:
                     if j in custom_eq_indices:
                         continue
@@ -6783,11 +6775,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     if should_coerce_literals:
                         target_type = coerce_to_literal(target_type)
                     target = TypeRange(target_type, is_upper_bound=False)
-                    is_value_target = is_target_for_value_narrowing(get_proper_type(target_type))
 
-                    if is_value_target:
-                        expr_type = coerce_to_literal(expr_type)
-                        expr_type = try_expanding_sum_type_to_union(expr_type, None)
                     if_map, else_map = conditional_types_to_typemaps(
                         operands[i],
                         *conditional_types(
@@ -6795,7 +6783,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                         ),
                     )
                     or_if_maps.append(if_map)
-                    if is_value_target:
+                    if is_target_for_value_narrowing(get_proper_type(target_type)):
                         or_else_maps.append(else_map)
 
             all_if_maps.append(reduce_or_conditional_type_maps(or_if_maps))
