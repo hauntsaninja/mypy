@@ -9,8 +9,9 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from collections.abc import Iterator
-from typing import Any, Callable
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
 
 from pytest import raises
 
@@ -309,6 +310,29 @@ class StubtestUnit(unittest.TestCase):
                 mistyped_var = 1
             """,
             error="X.mistyped_var",
+        )
+
+    @collect_cases
+    def test_transparent_type_check_only_subclasses(self) -> Iterator[Case]:
+        # See https://github.com/python/mypy/issues/20223
+        yield Case(
+            stub="""
+            from typing import type_check_only
+
+            class UFunc: ...
+
+            @type_check_only
+            class _BinaryUFunc(UFunc): ...
+
+            equal: _BinaryUFunc
+            """,
+            runtime="""
+            class UFunc:
+                pass
+
+            equal = UFunc()
+            """,
+            error=None,
         )
 
     @collect_cases
@@ -2725,6 +2749,33 @@ class StubtestMiscUnit(unittest.TestCase):
         )
         assert output == expected
 
+    def test_reexport_reports_import_location(self) -> None:
+        with use_tmp_dir(TEST_MODULE_NAME) as tmp_dir:
+            Path("builtins.pyi").write_text(stubtest_builtins_stub)
+            Path("typing.pyi").write_text(stubtest_typing_stub)
+            Path("enum.pyi").write_text(stubtest_enum_stub)
+
+            os.makedirs("test_module", exist_ok=True)
+            Path("test_module/__init__.pyi").write_text("from .mod import f")
+            Path("test_module/__init__.py").write_text("from .mod import f")
+            Path("test_module/mod.pyi").write_text("def f(self) -> None: ...")
+            Path("test_module/mod.py").write_text("def f(self, x): pass")
+
+            output = io.StringIO()
+            outerr = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(outerr):
+                test_stubs(parse_options([TEST_MODULE_NAME]), use_builtins_fixtures=True)
+
+            filtered_output = remove_color_code(
+                output.getvalue()
+                .replace(os.path.realpath(tmp_dir) + os.sep, "")
+                .replace(tmp_dir + os.sep, "")
+            )
+
+        assert filtered_output.count('stub does not have parameter "x"') == 1
+        assert "__init__.pyi" not in filtered_output
+        assert "mod.py:1" in filtered_output
+
     def test_ignore_flags(self) -> None:
         output = run_stubtest(
             stub="", runtime="__all__ = ['f']\ndef f(): pass", options=["--ignore-missing-stub"]
@@ -2774,24 +2825,16 @@ class StubtestMiscUnit(unittest.TestCase):
                 f.write("unused.*\n")
 
             output = run_stubtest(
-                stub=textwrap.dedent(
-                    """
+                stub=textwrap.dedent("""
                     def good() -> None: ...
                     def bad(number: int) -> None: ...
                     def also_bad(number: int) -> None: ...
-                    """.lstrip(
-                        "\n"
-                    )
-                ),
-                runtime=textwrap.dedent(
-                    """
+                    """.lstrip("\n")),
+                runtime=textwrap.dedent("""
                     def good(): pass
                     def bad(asdf): pass
                     def also_bad(asdf): pass
-                    """.lstrip(
-                        "\n"
-                    )
-                ),
+                    """.lstrip("\n")),
                 options=["--allowlist", allowlist.name, "--generate-allowlist"],
             )
             assert output == (

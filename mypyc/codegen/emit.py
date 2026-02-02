@@ -5,7 +5,8 @@ from __future__ import annotations
 import pprint
 import sys
 import textwrap
-from typing import Callable, Final
+from collections.abc import Callable
+from typing import Final
 
 from mypyc.codegen.cstring import c_string_initializer
 from mypyc.codegen.literals import Literals
@@ -22,7 +23,7 @@ from mypyc.common import (
     TYPE_PREFIX,
 )
 from mypyc.ir.class_ir import ClassIR, all_concrete_classes
-from mypyc.ir.func_ir import FuncDecl, FuncIR, get_text_signature
+from mypyc.ir.func_ir import FUNC_STATICMETHOD, FuncDecl, FuncIR, get_text_signature
 from mypyc.ir.ops import BasicBlock, Value
 from mypyc.ir.rtypes import (
     RInstance,
@@ -32,6 +33,7 @@ from mypyc.ir.rtypes import (
     RUnion,
     int_rprimitive,
     is_bool_or_bit_rprimitive,
+    is_bytearray_rprimitive,
     is_bytes_rprimitive,
     is_dict_rprimitive,
     is_fixed_width_rtype,
@@ -101,6 +103,7 @@ class EmitterContext:
     def __init__(
         self,
         names: NameGenerator,
+        strict_traceback_checks: bool,
         group_name: str | None = None,
         group_map: dict[str, str | None] | None = None,
     ) -> None:
@@ -128,6 +131,8 @@ class EmitterContext:
         self.declarations: dict[str, HeaderDeclaration] = {}
 
         self.literals = Literals()
+        # See mypyc/options.py for context.
+        self.strict_traceback_checks = strict_traceback_checks
 
 
 class ErrorHandler:
@@ -656,7 +661,17 @@ class Emitter:
         elif is_bytes_rprimitive(typ):
             if declare_dest:
                 self.emit_line(f"PyObject *{dest};")
-            check = "(PyBytes_Check({}) || PyByteArray_Check({}))"
+            check = "(PyBytes_Check({}))"
+            if likely:
+                check = f"(likely{check})"
+            self.emit_arg_check(src, dest, typ, check.format(src, src), optional)
+            self.emit_lines(f"    {dest} = {src};", "else {")
+            self.emit_cast_error_handler(error, src, dest, typ, raise_exception)
+            self.emit_line("}")
+        elif is_bytearray_rprimitive(typ):
+            if declare_dest:
+                self.emit_line(f"PyObject *{dest};")
+            check = "(PyByteArray_Check({}))"
             if likely:
                 check = f"(likely{check})"
             self.emit_arg_check(src, dest, typ, check.format(src, src), optional)
@@ -1189,6 +1204,8 @@ class Emitter:
         type_str: str = "",
         src: str = "",
     ) -> None:
+        if self.context.strict_traceback_checks:
+            assert traceback_entry[1] >= 0, "Traceback cannot have a negative line number"
         globals_static = self.static_name("globals", module_name)
         line = '%s("%s", "%s", %d, %s' % (
             func,
@@ -1221,10 +1238,11 @@ class Emitter:
         cfunc = f"(PyCFunction){cname}"
         func_flags = "METH_FASTCALL | METH_KEYWORDS"
         doc = f"PyDoc_STR({native_function_doc_initializer(fn)})"
+        has_self_arg = "true" if fn.class_name and fn.decl.kind != FUNC_STATICMETHOD else "false"
 
         code_flags = "CO_COROUTINE"
         self.emit_line(
-            f'PyObject* {wrapper_name} = CPyFunction_New({module}, "{filepath}", "{name}", {cfunc}, {func_flags}, {doc}, {fn.line}, {code_flags});'
+            f'PyObject* {wrapper_name} = CPyFunction_New({module}, "{filepath}", "{name}", {cfunc}, {func_flags}, {doc}, {fn.line}, {code_flags}, {has_self_arg});'
         )
         self.emit_line(f"if (unlikely(!{wrapper_name}))")
         self.emit_line(error_stmt)

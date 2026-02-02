@@ -27,7 +27,7 @@ from mypy.nodes import MypyFile
 from mypy.options import Options
 from mypy.plugin import Plugin, ReportConfigContext
 from mypy.util import hash_digest, json_dumps
-from mypyc.analysis.capsule_deps import find_implicit_capsule_dependencies
+from mypyc.analysis.capsule_deps import find_implicit_op_dependencies
 from mypyc.codegen.cstring import c_string_initializer
 from mypyc.codegen.emit import (
     Emitter,
@@ -56,6 +56,7 @@ from mypyc.common import (
     short_id_from_name,
 )
 from mypyc.errors import Errors
+from mypyc.ir.deps import LIBRT_BASE64, LIBRT_STRINGS, SourceDep
 from mypyc.ir.func_ir import FuncIR
 from mypyc.ir.module_ir import ModuleIR, ModuleIRs, deserialize_modules
 from mypyc.ir.ops import DeserMaps, LoadLiteral
@@ -248,9 +249,9 @@ def compile_scc_to_ir(
     for module in modules.values():
         for fn in module.functions:
             # Insert checks for uninitialized values.
-            insert_uninit_checks(fn)
+            insert_uninit_checks(fn, compiler_options.strict_traceback_checks)
             # Insert exception handling.
-            insert_exception_handling(fn)
+            insert_exception_handling(fn, compiler_options.strict_traceback_checks)
             # Insert reference count handling.
             insert_ref_count_opcodes(fn)
 
@@ -263,9 +264,9 @@ def compile_scc_to_ir(
             # Switch to lower abstraction level IR.
             lower_ir(fn, compiler_options)
             # Calculate implicit module dependencies (needed for librt)
-            capsules = find_implicit_capsule_dependencies(fn)
-            if capsules is not None:
-                module.capsules.update(capsules)
+            deps = find_implicit_op_dependencies(fn)
+            if deps is not None:
+                module.dependencies.update(deps)
             # Perform optimizations.
             do_copy_propagation(fn, compiler_options)
             do_flag_elimination(fn, compiler_options)
@@ -427,6 +428,16 @@ def load_scc_from_cache(
     return modules
 
 
+def collect_source_dependencies(modules: dict[str, ModuleIR]) -> set[SourceDep]:
+    """Collect all SourceDep dependencies from all modules."""
+    source_deps: set[SourceDep] = set()
+    for module in modules.values():
+        for dep in module.dependencies:
+            if isinstance(dep, SourceDep):
+                source_deps.add(dep)
+    return source_deps
+
+
 def compile_modules_to_c(
     result: BuildResult, compiler_options: CompilerOptions, errors: Errors, groups: Groups
 ) -> tuple[ModuleIRs, list[FileContents], Mapper]:
@@ -524,7 +535,9 @@ class GroupGenerator:
         """
         self.modules = modules
         self.source_paths = source_paths
-        self.context = EmitterContext(names, group_name, group_map)
+        self.context = EmitterContext(
+            names, compiler_options.strict_traceback_checks, group_name, group_map
+        )
         self.names = names
         # Initializations of globals to simple values that we can't
         # do statically because the windows loader is bad.
@@ -560,6 +573,10 @@ class GroupGenerator:
         if self.compiler_options.include_runtime_files:
             for name in RUNTIME_C_FILES:
                 base_emitter.emit_line(f'#include "{name}"')
+            # Include conditional source files
+            source_deps = collect_source_dependencies(self.modules)
+            for source_dep in sorted(source_deps, key=lambda d: d.path):
+                base_emitter.emit_line(f'#include "{source_dep.path}"')
         base_emitter.emit_line(f'#include "__native{self.short_group_suffix}.h"')
         base_emitter.emit_line(f'#include "__native_internal{self.short_group_suffix}.h"')
         emitter = base_emitter
@@ -610,11 +627,15 @@ class GroupGenerator:
         ext_declarations.emit_line("#include <Python.h>")
         ext_declarations.emit_line("#include <CPy.h>")
         if self.compiler_options.depends_on_librt_internal:
-            ext_declarations.emit_line("#include <librt_internal.h>")
-        if any("librt.base64" in mod.capsules for mod in self.modules.values()):
-            ext_declarations.emit_line("#include <librt_base64.h>")
-        if any("librt.strings" in mod.capsules for mod in self.modules.values()):
-            ext_declarations.emit_line("#include <librt_strings.h>")
+            ext_declarations.emit_line("#include <internal/librt_internal.h>")
+        if any(LIBRT_BASE64 in mod.dependencies for mod in self.modules.values()):
+            ext_declarations.emit_line("#include <base64/librt_base64.h>")
+        if any(LIBRT_STRINGS in mod.dependencies for mod in self.modules.values()):
+            ext_declarations.emit_line("#include <strings/librt_strings.h>")
+        # Include headers for conditional source files
+        source_deps = collect_source_dependencies(self.modules)
+        for source_dep in sorted(source_deps, key=lambda d: d.path):
+            ext_declarations.emit_line(f'#include "{source_dep.get_header()}"')
 
         declarations = Emitter(self.context)
         declarations.emit_line(f"#ifndef MYPYC_LIBRT_INTERNAL{self.group_suffix}_H")
@@ -1068,15 +1089,16 @@ class GroupGenerator:
         declaration = f"int CPyExec_{exported_name(module_name)}(PyObject *module)"
         module_static = self.module_internal_static_name(module_name, emitter)
         emitter.emit_lines(declaration, "{")
+        emitter.emit_line("intern_strings();")
         if self.compiler_options.depends_on_librt_internal:
             emitter.emit_line("if (import_librt_internal() < 0) {")
             emitter.emit_line("return -1;")
             emitter.emit_line("}")
-        if "librt.base64" in module.capsules:
+        if LIBRT_BASE64 in module.dependencies:
             emitter.emit_line("if (import_librt_base64() < 0) {")
             emitter.emit_line("return -1;")
             emitter.emit_line("}")
-        if "librt.strings" in module.capsules:
+        if LIBRT_STRINGS in module.dependencies:
             emitter.emit_line("if (import_librt_strings() < 0) {")
             emitter.emit_line("return -1;")
             emitter.emit_line("}")
@@ -1116,16 +1138,6 @@ class GroupGenerator:
                 emitter.emit_lines(f"if (unlikely(!{type_struct}))", error_stmt)
                 name_prefix = cl.name_prefix(emitter.names)
                 emitter.emit_line(f"CPyDef_{name_prefix}_trait_vtable_setup();")
-
-                if cl.coroutine_name:
-                    fn = cl.methods["__call__"]
-                    filepath = self.source_paths[module.fullname]
-                    name = cl.coroutine_name
-                    wrapper_name = emitter.emit_cpyfunction_instance(
-                        fn, name, filepath, error_stmt
-                    )
-                    static_name = emitter.static_name(cl.name + "_cpyfunction", module.fullname)
-                    emitter.emit_line(f"{static_name} = {wrapper_name};")
 
         emitter.emit_lines("if (CPyGlobalsInit() < 0)", "    goto fail;")
 

@@ -5,8 +5,19 @@ from __future__ import annotations
 import sys
 from abc import abstractmethod
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Final, NewType, TypeVar, cast, overload
-from typing_extensions import Self, TypeAlias as _TypeAlias, TypeGuard
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    NewType,
+    TypeAlias as _TypeAlias,
+    TypeGuard,
+    TypeVar,
+    cast,
+    overload,
+)
+from typing_extensions import Self
 
 from librt.internal import (
     read_int as read_int_bare,
@@ -319,9 +330,6 @@ class Type(mypy.nodes.Context):
     @classmethod
     def read(cls, data: ReadBuffer) -> Type:
         raise NotImplementedError(f"Cannot deserialize {cls.__name__} instance")
-
-    def is_singleton_type(self) -> bool:
-        return False
 
 
 class TypeAliasType(Type):
@@ -1468,9 +1476,6 @@ class NoneType(ProperType):
         assert read_tag(data) == END_TAG
         return NoneType()
 
-    def is_singleton_type(self) -> bool:
-        return True
-
 
 # NoneType used to be called NoneTyp so to avoid needlessly breaking
 # external plugins we keep that alias here.
@@ -1836,15 +1841,6 @@ class Instance(ProperType):
         new = self.copy_modified()
         new.extra_attrs = existing_attrs
         return new
-
-    def is_singleton_type(self) -> bool:
-        # TODO:
-        # Also make this return True if the type corresponds to NotImplemented?
-        return (
-            self.type.is_enum
-            and len(self.type.enum_members) == 1
-            or self.type.fullname in ELLIPSIS_TYPE_NAMES
-        )
 
 
 class InstanceCache:
@@ -2245,7 +2241,7 @@ class CallableType(FunctionLike):
         ret_type: Bogus[Type] = _dummy,
         fallback: Bogus[Instance] = _dummy,
         name: Bogus[str | None] = _dummy,
-        definition: Bogus[SymbolNode] = _dummy,
+        definition: Bogus[SymbolNode | None] = _dummy,
         variables: Bogus[Sequence[TypeVarLikeType]] = _dummy,
         line: int = _dummy_int,
         column: int = _dummy_int,
@@ -3070,11 +3066,11 @@ class TypedDictType(ProperType):
     def is_anonymous(self) -> bool:
         return self.fallback.type.fullname in TPDICT_FB_NAMES
 
-    def as_anonymous(self) -> TypedDictType:
+    def create_anonymous_fallback(self) -> Instance:
         if self.is_anonymous():
-            return self
+            return self.fallback
         assert self.fallback.type.typeddict_type is not None
-        return self.fallback.type.typeddict_type.as_anonymous()
+        return self.fallback.type.typeddict_type.create_anonymous_fallback()
 
     def copy_modified(
         self,
@@ -3099,10 +3095,6 @@ class TypedDictType(ProperType):
             items = {k: v for (k, v) in items.items() if k in item_names}
             required_keys &= set(item_names)
         return TypedDictType(items, required_keys, readonly_keys, fallback, self.line, self.column)
-
-    def create_anonymous_fallback(self) -> Instance:
-        anonymous = self.as_anonymous()
-        return anonymous.fallback
 
     def names_are_wider_than(self, other: TypedDictType) -> bool:
         return len(other.items.keys() - self.items.keys()) == 0
@@ -3232,7 +3224,6 @@ class LiteralType(ProperType):
         super().__init__(line, column)
         self.value = value
         self.fallback = fallback
-        self._hash = -1  # Cached hash value
 
     # NOTE: Enum types are always truthy by default, but this can be changed
     #       in subclasses, so we need to get the truthyness from the Enum
@@ -3262,13 +3253,12 @@ class LiteralType(ProperType):
         return visitor.visit_literal_type(self)
 
     def __hash__(self) -> int:
-        if self._hash == -1:
-            self._hash = hash((self.value, self.fallback))
-        return self._hash
+        # Intentionally a subset of __eq__ for perf
+        return hash(self.value)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, LiteralType):
-            return self.fallback == other.fallback and self.value == other.value
+            return self.value == other.value and self.fallback == other.fallback
         else:
             return NotImplemented
 
@@ -3325,9 +3315,6 @@ class LiteralType(ProperType):
         ret = LiteralType(read_literal(data, tag), fallback)
         assert read_tag(data) == END_TAG
         return ret
-
-    def is_singleton_type(self) -> bool:
-        return self.is_enum_literal() or isinstance(self.value, bool)
 
 
 class UnionType(ProperType):
@@ -3726,6 +3713,7 @@ class TypeStrVisitor(SyntheticTypeVisitor[str]):
     Notes:
      - Represent unbound types as Foo? or Foo?[...].
      - Represent the NoneType type as None.
+     - Represent Union[x, y] as x | y
     """
 
     def __init__(self, id_mapper: IdMapper | None = None, *, options: Options) -> None:
@@ -3956,9 +3944,7 @@ class TypeStrVisitor(SyntheticTypeVisitor[str]):
         return f"Literal[{t.value_repr()}]"
 
     def visit_union_type(self, t: UnionType, /) -> str:
-        use_or_syntax = self.options.use_or_syntax()
-        s = self.list_str(t.items, use_or_syntax=use_or_syntax)
-        return s if use_or_syntax else f"Union[{s}]"
+        return self.list_str(t.items, use_or_syntax=True)
 
     def visit_partial_type(self, t: PartialType, /) -> str:
         if t.type is None:
@@ -4002,7 +3988,11 @@ class TypeStrVisitor(SyntheticTypeVisitor[str]):
         """
         res = []
         for t in a:
-            res.append(t.accept(self))
+            s = t.accept(self)
+            if use_or_syntax and isinstance(get_proper_type(t), CallableType):
+                res.append(f"({s})")
+            else:
+                res.append(s)
         sep = ", " if not use_or_syntax else " | "
         return sep.join(res)
 

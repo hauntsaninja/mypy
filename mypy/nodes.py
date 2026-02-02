@@ -5,10 +5,19 @@ from __future__ import annotations
 import os
 from abc import abstractmethod
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from enum import Enum, unique
-from typing import TYPE_CHECKING, Any, Callable, Final, Optional, TypeVar, Union, cast
-from typing_extensions import TypeAlias as _TypeAlias, TypeGuard
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Optional,
+    TypeAlias as _TypeAlias,
+    TypeGuard,
+    TypeVar,
+    Union,
+    cast,
+)
 
 from librt.internal import (
     read_float as read_float_bare,
@@ -1823,19 +1832,26 @@ class PassStmt(Statement):
 
 
 class IfStmt(Statement):
-    __slots__ = ("expr", "body", "else_body")
+    __slots__ = ("expr", "body", "else_body", "unreachable_else")
 
-    __match_args__ = ("expr", "body", "else_body")
+    __match_args__ = ("expr", "body", "else_body", "unreachable_else")
 
     expr: list[Expression]
     body: list[Block]
     else_body: Block | None
+    # (If there is actually no else statement, semantic analysis may nevertheless create an
+    # empty else block and mark it permanently as unreachable to tell that the control flow
+    # must always go through the if block.)
+    unreachable_else: bool
+    # (Type checking may modify this flag repeatedly to indicate whether an actually available
+    # or unavailable else block is unreachable, considering the current type information.)
 
     def __init__(self, expr: list[Expression], body: list[Block], else_body: Block | None) -> None:
         super().__init__()
         self.expr = expr
         self.body = body
         self.else_body = else_body
+        self.unreachable_else = False
 
     def accept(self, visitor: StatementVisitor[T]) -> T:
         return visitor.visit_if_stmt(self)
