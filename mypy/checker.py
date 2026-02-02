@@ -3212,7 +3212,18 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
         # as X | Y.
         if not (s.is_alias_def and self.is_stub):
             with self.enter_final_context(s.is_final_def):
-                self.check_assignment(s.lvalues[-1], s.rvalue, s.type is None, s.new_syntax)
+                self.check_assignment(
+                    s.lvalues[-1],
+                    s.rvalue,
+                    infer_lvalue_type=(
+                        s.type is None
+                        or (
+                            (not isinstance(s.rvalue, TempNode) or not s.rvalue.no_rhs)
+                            and isinstance(get_proper_type(s.type), UnionType)
+                        )
+                    ),
+                    new_syntax=s.new_syntax,
+                )
 
         if s.is_alias_def:
             self.check_type_alias_rvalue(s)
