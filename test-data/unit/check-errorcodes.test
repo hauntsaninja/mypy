@@ -537,7 +537,8 @@ d: D = {'x': 1, 'y': 2}  # type: ignore[typeddict-item]
 y = x  # E: Cannot determine type of "x"  [has-type] \
        # E: Name "x" is used before definition  [used-before-def]
 reveal_type(y)  # N: Revealed type is "Any"
-x = None
+x = None  # E: Need type annotation for "x" (hint: "x: <type> | None = ...")  [var-annotated]
+
 
 [case testErrorCodeRedundantCast]
 # flags: --warn-redundant-casts
