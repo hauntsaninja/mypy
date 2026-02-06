@@ -226,7 +226,7 @@ class Options:
 
         # Allow flexible variable redefinition with an arbitrary type, in different
         # blocks and and at different nesting levels
-        self.allow_redefinition_new = False
+        self.allow_redefinition_new = True
 
         # Prohibit equality, identity, and container checks for non-overlapping types.
         # This makes 1 == '1', 1 in ['1'], and 1 is '1' errors.
