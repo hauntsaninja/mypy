@@ -6640,7 +6640,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
         elif operator in {"==", "!="}:
             is_target_for_value_narrowing = is_singleton_equality_type
 
-            should_coerce_literals = False
+            should_coerce_literals = True
             for i in expr_indices:
                 typ = get_proper_type(operand_types[i])
                 if is_literal_type_like(typ) or (isinstance(typ, Instance) and typ.type.is_enum):
