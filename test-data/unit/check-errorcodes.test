@@ -38,7 +38,7 @@ main:1: error: Invalid syntax  [syntax]
 main:1: error: Invalid syntax. Perhaps you forgot a comma?  [syntax]
 
 [case testErrorCodeSyntaxError2]
-def f(): # E: Type signature has too many arguments  [syntax]
+def f(): # E: Type signature has too many parameters  [syntax]
     # type: (int) -> None
     1
 
@@ -246,7 +246,7 @@ main:5: error: Invalid "type: ignore" comment  [syntax]
 main:6: error: Invalid "type: ignore" comment  [syntax]
 
 [case testErrorCodeArgKindAndCount]
-def f(x: int) -> None: pass  # N: "f" defined here
+def f(x: int) -> None: pass
 f()  # E: Missing positional argument "x" in call to "f"  [call-arg]
 f(1, 2)  # E: Too many arguments for "f"  [call-arg]
 f(y=1)  # E: Unexpected keyword argument "y" for "f"  [call-arg]
@@ -342,7 +342,7 @@ def f() -> int:
 [case testErrorCodeAssignment]
 x: str = 0  # E: Incompatible types in assignment (expression has type "int", variable has type "str")  [assignment]
 
-def f(x: str = 0) -> None:  # E: Incompatible default for argument "x" (default has type "int", argument has type "str")  [assignment]
+def f(x: str = 0) -> None:  # E: Incompatible default for parameter "x" (default has type "int", parameter has type "str")  [assignment]
     pass
 
 class A:
@@ -382,7 +382,7 @@ def f(x):  # E: Function is missing a type annotation  [no-untyped-def]
 def g(x: int):  # E: Function is missing a return type annotation  [no-untyped-def]
     pass
 
-def h(x) -> None:  # E: Function is missing a type annotation for one or more arguments  [no-untyped-def]
+def h(x) -> None:  # E: Function is missing a type annotation for one or more parameters  [no-untyped-def]
     pass
 
 def gen():  # E: Function is missing a return type annotation  [no-untyped-def]
@@ -547,11 +547,11 @@ from typing import cast
 x = cast(int, int())  # E: Redundant cast to "int"  [redundant-cast]
 
 [case testErrorCodeInvalidCommentSignature]
-def f(x):  # E: Type signature has too few arguments  [syntax]
+def f(x):  # E: Type signature has too few parameters  [syntax]
     # type: () -> None
     pass
 
-def g(x):  # E: Type signature has too many arguments  [syntax]
+def g(x):  # E: Type signature has too many parameters  [syntax]
     # type: (int, int) -> None
     pass
 
@@ -1068,13 +1068,11 @@ def f(d: D, s: str) -> None:
 [typing fixtures/typing-typeddict.pyi]
 
 [case testRecommendErrorCode]
-# type: ignore[whatever]  # E: type ignore with error code is not supported for modules; use `# mypy: disable-error-code="whatever"`  [syntax] \
-                          # N: Error code "syntax" not covered by "type: ignore" comment
+# type: ignore[whatever]  # E: type ignore with error code is not supported for modules; use `# mypy: disable-error-code="whatever"`  [syntax]
 1 + "asdf"
 
 [case testRecommendErrorCode2]
-# type: ignore[whatever, other]  # E: type ignore with error code is not supported for modules; use `# mypy: disable-error-code="whatever, other"`  [syntax] \
-                                 # N: Error code "syntax" not covered by "type: ignore" comment
+# type: ignore[whatever, other]  # E: type ignore with error code is not supported for modules; use `# mypy: disable-error-code="whatever, other"`  [syntax]
 1 + "asdf"
 
 [case testShowErrorCodesInConfig]
