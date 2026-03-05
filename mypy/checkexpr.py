@@ -30,6 +30,7 @@ from mypy.expandtype import (
 from mypy.exprtotype import TypeTranslationError, expr_to_unanalyzed_type
 from mypy.infer import ArgumentInferContext, infer_function_type_arguments, infer_type_arguments
 from mypy.literals import literal
+from mypy.lookup import lookup_fully_qualified
 from mypy.maptype import map_instance_to_supertype
 from mypy.meet import is_overlapping_types, narrow_declared_type
 from mypy.message_registry import ErrorMessage
@@ -92,6 +93,7 @@ from mypy.nodes import (
     SuperExpr,
     SymbolNode,
     SymbolTableNode,
+    TemplateStrExpr,
     TempNode,
     TupleExpr,
     TypeAlias,
@@ -5455,11 +5457,28 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
         # No TypedDict type in context.
         return [], False
 
+    def visit_template_str_expr(self, e: TemplateStrExpr) -> Type:
+        """Type check a template string expression (t-string).
+
+        Type-checks all interpolated expressions but the result is always
+        string.templatelib.Template.
+        """
+        for item in e.items:
+            if isinstance(item, tuple):
+                value_expr, _source, _conversion, format_spec = item
+                self.accept(value_expr)
+                if format_spec is not None:
+                    self.accept(format_spec)
+        sym = lookup_fully_qualified("string.templatelib.Template", self.chk.modules)
+        if sym is not None and isinstance(sym.node, TypeInfo):
+            return Instance(sym.node, [])
+        return AnyType(TypeOfAny.from_error)
+
     def visit_lambda_expr(self, e: LambdaExpr) -> Type:
         """Type check lambda expression."""
         old_in_lambda = self.in_lambda_expr
         self.in_lambda_expr = True
-        self.chk.check_default_args(e, body_is_trivial=False)
+        self.chk.check_default_params(e, body_is_trivial=False)
         inferred_type, type_override = self.infer_lambda_type_using_context(e)
         if not inferred_type:
             self.chk.return_types.append(AnyType(TypeOfAny.special_form))
