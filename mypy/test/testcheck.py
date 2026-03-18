@@ -199,6 +199,8 @@ class TypeCheckSuite(DataSuite):
             a = e.messages
             blocker = True
         finally:
+            if res is not None:
+                res.manager.metastore.close()
             assert sys.path[0] == plugin_dir
             del sys.path[0]
 
