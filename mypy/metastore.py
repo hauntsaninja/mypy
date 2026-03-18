@@ -224,3 +224,12 @@ class SqliteMetadataStore(MetadataStore):
         if self.db:
             for row in self.db.execute("SELECT path FROM files2"):
                 yield row[0]
+
+    def close(self) -> None:
+        if self.db:
+            db = self.db
+            self.db = None
+            db.close()
+
+    def __del__(self) -> None:
+        self.close()
