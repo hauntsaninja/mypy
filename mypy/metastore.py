@@ -68,6 +68,10 @@ class MetadataStore:
     @abstractmethod
     def list_all(self) -> Iterable[str]: ...
 
+    @abstractmethod
+    def close(self) -> None:
+        """Release any resources held by the backing store."""
+
 
 def random_string() -> str:
     return binascii.hexlify(os.urandom(8)).decode("ascii")
@@ -135,6 +139,9 @@ class FilesystemMetadataStore(MetadataStore):
             dir = os.path.relpath(dir, self.cache_dir_prefix)
             for file in files:
                 yield os.path.normpath(os_path_join(dir, file))
+
+    def close(self) -> None:
+        pass
 
 
 SCHEMA = """

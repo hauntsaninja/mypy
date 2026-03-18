@@ -139,6 +139,7 @@ def build_ir_for_single_file2(
         assert_func_ir_valid(fn)
     tree = result.graph[module.fullname].tree
     assert tree is not None
+    result.manager.metastore.close()
     return module, tree, result.types, mapper
 
 
