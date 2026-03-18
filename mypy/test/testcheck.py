@@ -231,11 +231,7 @@ class TypeCheckSuite(DataSuite):
         assert_string_arrays_equal(output, a, msg.format(testcase.file, testcase.line))
 
         if res:
-            if options.cache_dir != os.devnull:
-                if sys.platform == "win32":
-                    print(
-                        f"verify_cache {options.cache_dir=}, {os.devnull=}, {testcase.writescache=}"
-                    )
+            if options.cache_dir != os.devnull and testcase.writescache:
                 self.verify_cache(module_data, res.manager, blocker, incremental_step)
 
             name = "targets"
