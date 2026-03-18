@@ -199,8 +199,6 @@ class TypeCheckSuite(DataSuite):
             a = e.messages
             blocker = True
         finally:
-            if res is not None:
-                res.manager.metastore.close()
             assert sys.path[0] == plugin_dir
             del sys.path[0]
 
@@ -233,7 +231,7 @@ class TypeCheckSuite(DataSuite):
         assert_string_arrays_equal(output, a, msg.format(testcase.file, testcase.line))
 
         if res:
-            if testcase.writescache:
+            if options.cache_dir != os.devnull:
                 self.verify_cache(module_data, res.manager, blocker, incremental_step)
 
             name = "targets"
@@ -260,6 +258,7 @@ class TypeCheckSuite(DataSuite):
                     assert_module_equivalence(
                         "stale" + suffix, expected_stale, res.manager.stale_modules
                     )
+            res.manager.metastore.close()
 
         if testcase.output_files:
             check_test_output_files(testcase, incremental_step, strip_prefix="tmp/")
