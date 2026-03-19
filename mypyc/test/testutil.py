@@ -123,6 +123,7 @@ def build_ir_for_single_file2(
     # Construct input as a single single.
     # Parse and type check the input program.
     result = build.build(sources=[source], options=options, alt_lib_path=test_temp_dir)
+    result.manager.metastore.close()
     if result.errors:
         raise CompileError(result.errors)
 
@@ -139,7 +140,6 @@ def build_ir_for_single_file2(
         assert_func_ir_valid(fn)
     tree = result.graph[module.fullname].tree
     assert tree is not None
-    result.manager.metastore.close()
     return module, tree, result.types, mapper
 
 
