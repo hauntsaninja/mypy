@@ -539,8 +539,6 @@ y = x  # E: Cannot determine type of "x"  [has-type] \
 reveal_type(y)  # N: Revealed type is "Any"
 x = None
 
-
-
 [case testErrorCodeRedundantCast]
 # flags: --warn-redundant-casts
 from typing import cast
