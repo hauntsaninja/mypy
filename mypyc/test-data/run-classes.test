@@ -4328,7 +4328,7 @@ from __future__ import annotations
 
 from mypy_extensions import mypyc_attr
 
-a = []
+a: list[int] = []
 
 @mypyc_attr(free_list_len=1)
 class Foo:
