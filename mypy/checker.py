@@ -6636,6 +6636,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                             operand_types=[item_type, collection_item_type],
                             expr_indices=[0, 1],
                             narrowable_indices={0},
+                            always_coerce_literals=True,
                         )
 
                         # TODO: This remove_optional code should no longer be needed. The only
@@ -6688,6 +6689,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         operand_types: list[Type],
         expr_indices: list[int],
         narrowable_indices: AbstractSet[int],
+        always_coerce_literals: bool = False,
     ) -> tuple[TypeMap, TypeMap]:
         """
         Calculate type maps for '==', '!=', 'is' or 'is not' expression, ignoring `type(x)` checks.
@@ -6741,12 +6743,17 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         elif operator in {"==", "!="}:
             is_target_for_value_narrowing = is_singleton_equality_type
 
-            should_coerce_literals = False
-            for i in expr_indices:
-                typ = get_proper_type(operand_types[i])
-                if is_literal_type_like(typ) or (isinstance(typ, Instance) and typ.type.is_enum):
-                    should_coerce_literals = True
-                    break
+            if always_coerce_literals:
+                should_coerce_literals = True
+            else:
+                should_coerce_literals = False
+                for i in expr_indices:
+                    typ = get_proper_type(operand_types[i])
+                    if is_literal_type_like(typ) or (
+                        isinstance(typ, Instance) and typ.type.is_enum
+                    ):
+                        should_coerce_literals = True
+                        break
 
             custom_eq_indices = {i for i in expr_indices if has_custom_eq_checks(operand_types[i])}
             enum_comparison_is_ambiguous = True
