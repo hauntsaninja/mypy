@@ -507,7 +507,7 @@ def handle_recursive_union(template: UnionType, actual: Type, direction: int) ->
     non_type_var_items = [t for t in template.items if not isinstance(t, TypeVarType)]
     type_var_items = [t for t in template.items if isinstance(t, TypeVarType)]
     ret = infer_constraints(UnionType.make_union(non_type_var_items), actual, direction)
-    if ret or any(mypy.subtypes.is_subtype(t, actual) for t in non_type_var_items):
+    if ret or any(mypy.subtypes.is_same_type(t, actual) for t in non_type_var_items):
         return ret
     ret = infer_constraints(UnionType.make_union(type_var_items), actual, direction)
     return ret
