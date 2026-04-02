@@ -1040,3 +1040,12 @@ def f(obj: OneClass) -> None:
     else:
         reveal_type(obj)  # N: Revealed type is "builtins.list[...]"
 [builtins fixtures/isinstancelist.pyi]
+
+[case testRecursiveDictOr]
+from typing_extensions import TypeAlias
+A: TypeAlias = "dict[str, A | int]"
+
+def f(d1: A, d2: A) -> None:
+    d3: A = {**d1, **d2}
+    d4: A = d1 | d2
+[builtins fixtures/dict-full.pyi]

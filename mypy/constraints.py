@@ -506,9 +506,11 @@ def handle_recursive_union(template: UnionType, actual: Type, direction: int) ->
     # the union in two parts, and try inferring sequentially.
     non_type_var_items = [t for t in template.items if not isinstance(t, TypeVarType)]
     type_var_items = [t for t in template.items if isinstance(t, TypeVarType)]
-    return infer_constraints(
-        UnionType.make_union(non_type_var_items), actual, direction
-    ) or infer_constraints(UnionType.make_union(type_var_items), actual, direction)
+    ret = infer_constraints(UnionType.make_union(non_type_var_items), actual, direction)
+    if ret or any(mypy.subtypes.is_subtype(t, actual) for t in non_type_var_items):
+        return ret
+    ret = infer_constraints(UnionType.make_union(type_var_items), actual, direction)
+    return ret
 
 
 def any_constraints(options: list[list[Constraint] | None], *, eager: bool) -> list[Constraint]:
