@@ -166,7 +166,10 @@ def connect_db(db_file: str, sync_off: bool = False) -> sqlite3.Connection:
 
     mode = db.execute("PRAGMA journal_mode").fetchone()[0]
     if mode.lower() != "wal":
-        mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        try:
+            db.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass
 
     db.executescript(SCHEMA)
     return db
