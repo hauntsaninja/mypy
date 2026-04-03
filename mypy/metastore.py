@@ -173,8 +173,8 @@ class SqliteMetadataStore(MetadataStore):
         # We check startswith instead of equality because the version
         # will have already been appended by the time the cache dir is
         # passed here.
+        self.db = None
         if cache_dir_prefix.startswith(os.devnull):
-            self.db = None
             return
 
         os.makedirs(cache_dir_prefix, exist_ok=True)
