@@ -49,6 +49,7 @@ from mypyc.ir.ops import (
     FloatNeg,
     FloatOp,
     GetAttr,
+    GetElement,
     GetElementPtr,
     Goto,
     Integer,
@@ -66,6 +67,7 @@ from mypyc.ir.ops import (
     PrimitiveOp,
     RaiseStandardError,
     Register,
+    SetMem,
     Truncate,
     TupleGet,
     TupleSet,
@@ -82,9 +84,11 @@ from mypyc.ir.rtypes import (
     RArray,
     RInstance,
     RPrimitive,
+    RStruct,
     RTuple,
     RType,
     RUnion,
+    RVec,
     bit_rprimitive,
     bitmap_rprimitive,
     bool_rprimitive,
@@ -95,9 +99,11 @@ from mypyc.ir.rtypes import (
     c_size_t_rprimitive,
     check_native_int_range,
     float_rprimitive,
+    int64_rprimitive,
     int_rprimitive,
     is_bool_or_bit_rprimitive,
     is_bytes_rprimitive,
+    is_c_py_ssize_t_rprimitive,
     is_dict_rprimitive,
     is_fixed_width_rtype,
     is_float_rprimitive,
@@ -125,6 +131,7 @@ from mypyc.ir.rtypes import (
     str_rprimitive,
 )
 from mypyc.irbuild.util import concrete_arg_kind
+from mypyc.irbuild.vec import vec_contains, vec_get_item, vec_len_native
 from mypyc.options import CompilerOptions
 from mypyc.primitives.bytes_ops import bytes_compare
 from mypyc.primitives.dict_ops import (
@@ -281,6 +288,11 @@ class LowLevelIRBuilder:
         self.blocks[-1].ops.append(op)
         return op
 
+    def assign(self, lvalue: Register, rvalue: Value | int) -> None:
+        if isinstance(rvalue, int):
+            rvalue = Integer(rvalue, lvalue.type)
+        self.add(Assign(lvalue, rvalue))
+
     def goto(self, target: BasicBlock) -> None:
         """Add goto to a basic block."""
         if not self.blocks[-1].terminated:
@@ -304,6 +316,30 @@ class LowLevelIRBuilder:
 
     def load_mem(self, ptr: Value, value_type: RType, *, borrow: bool = False) -> Value:
         return self.add(LoadMem(value_type, ptr, borrow=borrow))
+
+    def set_mem(self, ptr: Value, value_type: RType, value: Value) -> None:
+        self.add(SetMem(value_type, ptr, value, line=-1))
+
+    def get_element(self, reg: Value, field: str) -> Value:
+        return self.add(GetElement(reg, field))
+
+    def load_address(self, name: str, rtype: RType) -> Value:
+        return self.add(LoadAddress(rtype, name))
+
+    def load_struct_field(
+        self, ptr: Value, struct: RStruct, field: str, *, borrow: bool = False
+    ) -> Value:
+        address = self.add(GetElementPtr(ptr, struct, field))
+        return self.load_mem(address, struct.field_type(field), borrow=borrow)
+
+    def set_struct_field(
+        self, ptr: Value, struct: RStruct, field: str, value: Value, line: int
+    ) -> None:
+        address = self.add(GetElementPtr(ptr, struct, field))
+        field_type = struct.field_type(field)
+        value = self.coerce(value, field_type, line)
+        self.set_mem(address, field_type, value)
+        self.keep_alive([ptr], line)
 
     def push_error_handler(self, handler: BasicBlock | None) -> None:
         self.error_handlers.append(handler)
@@ -400,11 +436,17 @@ class LowLevelIRBuilder:
                 and isinstance(target_type, RPrimitive)
                 and src_type.is_native_int
                 and target_type.is_native_int
-                and src_type.size == target_type.size
+                and src_type.size <= target_type.size
                 and src_type.is_signed == target_type.is_signed
             ):
-                # Equivalent types
-                return src
+                if src_type.size == target_type.size:
+                    # Equivalent types
+                    return src
+                else:
+                    # Extend to larger type
+                    return self.add(Extend(src, target_type, target_type.is_signed, line))
+            elif is_int64_rprimitive(src_type) and is_c_py_ssize_t_rprimitive(target_type):
+                return self.coerce_i64_to_ssize_t(src, line)
             elif is_bool_or_bit_rprimitive(src_type) and is_tagged(target_type):
                 shifted = self.int_op(
                     bool_rprimitive, src, Integer(1, bool_rprimitive), IntOp.LEFT_SHIFT
@@ -509,6 +551,47 @@ class LowLevelIRBuilder:
         self.activate_block(end)
         return res
 
+    def check_fixed_width_range(
+        self, src: Value, target_type: RPrimitive, overflow_block: BasicBlock, line: int
+    ) -> None:
+        """Check if src fits in target_type range, branch to overflow_block if not.
+
+        On success, continues in a newly activated block where the value is
+        known to be in range.
+
+        Args:
+            src: Source value to check
+            target_type: Target fixed-width type defining the valid range
+            overflow_block: Block to branch to if value is out of range
+            line: Line number
+        """
+        in_range, in_range2 = BasicBlock(), BasicBlock()
+
+        size = target_type.size
+        upper_bound = 1 << (size * 8 - 1)
+        if not target_type.is_signed:
+            upper_bound *= 2
+
+        # Check if value < upper_bound
+        check_upper = self.add(
+            ComparisonOp(src, Integer(upper_bound, src.type), ComparisonOp.SLT, line)
+        )
+        self.add(Branch(check_upper, in_range, overflow_block, Branch.BOOL, line))
+
+        self.activate_block(in_range)
+
+        # Check if value >= lower_bound
+        if target_type.is_signed:
+            lower_bound = -upper_bound
+        else:
+            lower_bound = 0
+        check_lower = self.add(
+            ComparisonOp(src, Integer(lower_bound, src.type), ComparisonOp.SGE, line)
+        )
+        self.add(Branch(check_lower, in_range2, overflow_block, Branch.BOOL, line))
+
+        self.activate_block(in_range2)
+
     def coerce_tagged_to_fixed_width_with_range_check(
         self,
         src: Value,
@@ -543,32 +626,8 @@ class LowLevelIRBuilder:
         assert size < source_size, (target_type, size, source_size)
 
         res = Register(target_type)
-        in_range, in_range2 = BasicBlock(), BasicBlock()
 
-        # Calculate bounds for the target type (in tagged representation)
-        upper_bound = 1 << (size * 8 - 1)
-        if not target_type.is_signed:
-            upper_bound *= 2
-
-        # Check if value < upper_bound
-        check_upper = self.add(
-            ComparisonOp(src, Integer(upper_bound, src.type), ComparisonOp.SLT, line)
-        )
-        self.add(Branch(check_upper, in_range, overflow_block, Branch.BOOL, line))
-
-        self.activate_block(in_range)
-
-        # Check if value >= lower_bound
-        if target_type.is_signed:
-            lower_bound = -upper_bound
-        else:
-            lower_bound = 0
-        check_lower = self.add(
-            ComparisonOp(src, Integer(lower_bound, src.type), ComparisonOp.SGE, line)
-        )
-        self.add(Branch(check_lower, in_range2, overflow_block, Branch.BOOL, line))
-
-        self.activate_block(in_range2)
+        self.check_fixed_width_range(src, target_type, overflow_block, line)
 
         # Value is in range - shift right to remove tag, then truncate
         shifted = self.int_op(
@@ -675,6 +734,32 @@ class LowLevelIRBuilder:
         s = self.int_op(int_rprimitive, tmp, Integer(1, tmp.type), IntOp.LEFT_SHIFT, line)
         self.add(Assign(res, s))
         self.goto(end)
+
+        self.activate_block(end)
+        return res
+
+    def coerce_i64_to_ssize_t(self, src: Value, line: int) -> Value:
+        """Coerce int64 to c_pyssize_t with range check on 32-bit platforms.
+
+        On 64-bit platforms, this is a no-op since the types have the same size.
+        On 32-bit platforms, raises ValueError if the value doesn't fit in 32 bits.
+        """
+        if PLATFORM_SIZE == 8:
+            return src
+
+        # 32-bit platform: need range check
+        overflow, end = BasicBlock(), BasicBlock()
+
+        self.check_fixed_width_range(src, c_pyssize_t_rprimitive, overflow, line)
+
+        # Value is in range - truncate to 32 bits
+        res = self.add(Truncate(src, c_pyssize_t_rprimitive, line))
+        self.goto(end)
+
+        # Handle overflow case
+        self.activate_block(overflow)
+        self.call_c(int32_overflow, [], line)
+        self.add(Unreachable())
 
         self.activate_block(end)
         return res
@@ -1575,6 +1660,9 @@ class LowLevelIRBuilder:
         if dunder_op:
             return dunder_op
 
+        if isinstance(rtype, RVec) and op == "in":
+            return vec_contains(self, rreg, lreg, line)
+
         primitive_ops_candidates = binary_ops.get(op, [])
         target = self.matching_primitive_op(primitive_ops_candidates, [lreg, rreg], line)
         assert target, "Unsupported binary operation: %s" % op
@@ -1898,6 +1986,26 @@ class LowLevelIRBuilder:
         elif op == "~":
             return self.unary_invert(value, line)
         raise RuntimeError("Unsupported unary operation: %s" % op)
+
+    def get_item(
+        self,
+        base: Value,
+        item: Value,
+        result_type: RType | None,
+        line: int,
+        *,
+        can_borrow: bool = False,
+    ) -> Value:
+        """Generate base[item]."""
+        if isinstance(base.type, RVec):
+            if is_int_rprimitive(item.type) or is_short_int_rprimitive(item.type):
+                item = self.coerce(item, int64_rprimitive, line)
+            if is_int64_rprimitive(item.type):
+                return vec_get_item(self, base, item, line, can_borrow=can_borrow)
+        # TODO: Move special casing for RTuple here from transform_index_expr
+        return self.gen_method_call(
+            base, "__getitem__", [item], result_type, line, can_borrow=can_borrow
+        )
 
     def make_dict(self, key_value_pairs: Sequence[DictEntry], line: int) -> Value:
         result: Value | None = None
@@ -2577,6 +2685,13 @@ class LowLevelIRBuilder:
             self.activate_block(ok)
             return length
 
+        elif isinstance(typ, RVec):
+            len_value = vec_len_native(self, val)
+            if use_pyssize_t:
+                return len_value
+            count = Integer(1, c_pyssize_t_rprimitive, line)
+            return self.int_op(short_int_rprimitive, len_value, count, IntOp.LEFT_SHIFT, line)
+
         op = self.matching_primitive_op(function_ops["builtins.len"], [val], line)
         if op is not None:
             return op
@@ -2698,11 +2813,35 @@ class LowLevelIRBuilder:
 
         Return None if no translation found; otherwise return the target register.
         """
+        low_level_op = self._translate_special_low_level_method_call(
+            base_reg, name, args, result_type, line, can_borrow
+        )
+        if low_level_op is not None:
+            return low_level_op
         primitive_ops_candidates = method_call_ops.get(name, [])
         primitive_op = self.matching_primitive_op(
             primitive_ops_candidates, [base_reg] + args, line, result_type, can_borrow=can_borrow
         )
         return primitive_op
+
+    def _translate_special_low_level_method_call(
+        self,
+        base_reg: Value,
+        name: str,
+        args: list[Value],
+        result_type: RType | None,
+        line: int,
+        can_borrow: bool = False,
+    ) -> Value | None:
+        if name == "__getitem__" and len(args) == 1:
+            arg = args[0]
+            if isinstance(base_reg.type, RVec) and (
+                is_int64_rprimitive(arg.type) or is_tagged(arg.type)
+            ):
+                if is_tagged(arg.type):
+                    arg = self.coerce(arg, int64_rprimitive, line)
+                return vec_get_item(self, base_reg, arg, line)
+        return None
 
     def translate_eq_cmp(self, lreg: Value, rreg: Value, expr_op: str, line: int) -> Value | None:
         """Add an equality comparison operation.
@@ -2855,6 +2994,30 @@ class LowLevelIRBuilder:
         else:
             return self.call_c(dict_new_op, [], line)
 
+    # Loop helpers
+
+    def begin_for(self, start: Value, end: Value, step: Value, *, signed: bool) -> ForBuilder:
+        """Generate for loop over a pointer or native int range.
+
+        Roughly corresponds to "for i in range(start, end, step): ....". Only
+        positive values for step are supported.
+
+        The loop index register is generated automatically and is available
+        via the return value. Do not modify it!
+
+        Example usage that clears a memory area:
+
+          for_loop = builder.begin_for(start_ptr, end_ptr, int32_rprimitive.size)
+
+          # For loop body
+          builder.set_mem(for_loop.index, int32_rprimitive, Integer(0, int32_rprimitive))
+
+          for_loop.finish()
+        """
+        b = ForBuilder(self, start, end, step, signed=signed)
+        b.begin()
+        return b
+
     def error(self, msg: str, line: int) -> None:
         assert self.errors is not None, "cannot generate errors in this compiler phase"
         self.errors.error(msg, self.module_path, line)
@@ -2868,3 +3031,36 @@ def num_positional_args(arg_values: list[Value], arg_kinds: list[ArgKind] | None
         if kind == ARG_POS:
             num_pos += 1
     return num_pos
+
+
+class ForBuilder:
+    """Builder for simple for loops."""
+
+    def __init__(
+        self, builder: LowLevelIRBuilder, start: Value, end: Value, step: Value, *, signed: bool
+    ) -> None:
+        self.builder = builder
+        self.start = start
+        self.end = end
+        self.step = step
+        self.signed = signed
+        self.index = Register(start.type)
+        self.top = BasicBlock()
+        self.body = BasicBlock()
+        self.loop_exit = BasicBlock()
+
+    def begin(self) -> None:
+        builder = self.builder
+        builder.assign(self.index, self.start)
+        builder.goto_and_activate(self.top)
+        op = ComparisonOp.SLT if self.signed else ComparisonOp.ULT
+        comp = ComparisonOp(self.index, self.end, op, line=-1)
+        builder.add(comp)
+        builder.add(Branch(comp, self.body, self.loop_exit, Branch.BOOL))
+        builder.goto_and_activate(self.body)
+
+    def finish(self) -> None:
+        builder = self.builder
+        builder.assign(self.index, builder.int_add(self.index, self.step))
+        builder.goto(self.top)
+        builder.activate_block(self.loop_exit)
