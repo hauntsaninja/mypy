@@ -258,6 +258,7 @@ class TypeCheckSuite(DataSuite):
                     assert_module_equivalence(
                         "stale" + suffix, expected_stale, res.manager.stale_modules
                     )
+            res.manager.metastore.close()
 
         if testcase.output_files:
             check_test_output_files(testcase, incremental_step, strip_prefix="tmp/")
@@ -293,7 +294,7 @@ class TypeCheckSuite(DataSuite):
         ignore_errors = True
         missing = {}
         for id, path in modules.items():
-            meta = build.find_cache_meta(id, path, manager)
+            meta, _ = build.find_cache_meta(id, path, manager)
             if not build.validate_meta(meta, id, path, ignore_errors, manager):
                 missing[id] = path
         return set(missing.values())
