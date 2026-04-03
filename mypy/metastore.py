@@ -163,7 +163,11 @@ def connect_db(db_file: str, sync_off: bool = False) -> sqlite3.Connection:
         # but without this flag, commits are *very* slow, especially when using HDDs,
         # see https://www.sqlite.org/faq.html#q19 for details.
         db.execute("PRAGMA synchronous=OFF")
-    db.execute("PRAGMA journal_mode=WAL")
+
+    mode = db.execute("PRAGMA journal_mode").fetchone()[0]
+    if mode.lower() != "wal":
+        mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+
     db.executescript(SCHEMA)
     return db
 
