@@ -7884,7 +7884,9 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
             return {}, {}
 
         issubclass_type = self.get_isinstance_type(node.args[1])
-        yes_type, no_type = self.conditional_types_with_intersection(vartype, issubclass_type, expr)
+        yes_type, no_type = self.conditional_types_with_intersection(
+            vartype, issubclass_type, expr
+        )
         yes_map, no_map = conditional_types_to_typemaps(expr, yes_type, no_type)
         yes_map, no_map = map(convert_to_typetype, (yes_map, no_map))
         return yes_map, no_map
