@@ -130,6 +130,7 @@ from mypy.nodes import (
     RefExpr,
     ReturnStmt,
     SetExpr,
+    SplittingVisitor,
     StarExpr,
     Statement,
     StrExpr,
@@ -319,7 +320,7 @@ class LocalTypeMap:
         return False
 
 
-class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
+class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
     """Mypy type checker.
 
     Type check mypy source files that have been semantically analyzed.
@@ -454,9 +455,6 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
             or self.path in self.msg.errors.ignored_files
             or (self.options.test_env and self.is_typeshed_stub)
         )
-
-        # If True, process function definitions. If False, don't. This is used
-        # for processing module top levels in fine-grained incremental mode.
         self.recurse_into_functions = True
         # This internal flag is used to track whether we a currently type-checking
         # a final declaration (assignment), so that some errors should be suppressed.
@@ -719,23 +717,10 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
     # Definitions
     #
 
-    @contextmanager
-    def set_recurse_into_functions(self) -> Iterator[None]:
-        """Temporarily set recurse_into_functions to True.
-
-        This is used to process top-level functions/methods as a whole.
-        """
-        old_recurse_into_functions = self.recurse_into_functions
-        self.recurse_into_functions = True
-        try:
-            yield
-        finally:
-            self.recurse_into_functions = old_recurse_into_functions
-
     def visit_overloaded_func_def(self, defn: OverloadedFuncDef) -> None:
         # If a function/method can infer variable types, it should be processed as part
         # of the module top level (i.e. module interface).
-        if not self.recurse_into_functions and not defn.can_infer_vars:
+        if not self.recurse_into_functions and not defn.def_or_infer_vars:
             return
         with self.tscope.function_scope(defn), self.set_recurse_into_functions():
             self._visit_overloaded_func_def(defn)
@@ -1018,7 +1003,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                 if not is_callable_compatible(
                     impl, sig1, is_compat=is_subtype, is_proper_subtype=False, ignore_return=True
                 ):
-                    self.msg.overloaded_signatures_arg_specific(i + 1, defn.impl)
+                    self.msg.overloaded_signatures_param_specific(i + 1, defn.impl)
 
                 # Is the overload alternative's return type a subtype of the implementation's?
                 if not (
@@ -1211,7 +1196,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
             return NoneType()
 
     def visit_func_def(self, defn: FuncDef) -> None:
-        if not self.recurse_into_functions and not defn.can_infer_vars:
+        if not self.recurse_into_functions and not defn.def_or_infer_vars:
             return
         with self.tscope.function_scope(defn), self.set_recurse_into_functions():
             self.check_func_item(defn, name=defn.name)
@@ -1452,8 +1437,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                         not self.can_skip_diagnostics
                         or self.options.preserve_asts
                         or not isinstance(defn, FuncDef)
-                        or defn.has_self_attr_def
-                        or defn.can_infer_vars
+                        or defn.def_or_infer_vars
                     ):
                         self.accept(item.body)
                 unreachable = self.binder.is_unreachable()
@@ -5409,6 +5393,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
             if isinstance(ttype, AnyType):
                 all_types.append(ttype)
                 continue
+            if isinstance(ttype, UninhabitedType):
+                continue
 
             if isinstance(ttype, FunctionLike):
                 item = ttype.items[0]
@@ -5620,7 +5606,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
     def visit_decorator_inner(
         self, e: Decorator, allow_empty: bool = False, skip_first_item: bool = False
     ) -> None:
-        if self.recurse_into_functions or e.func.can_infer_vars:
+        if self.recurse_into_functions or e.func.def_or_infer_vars:
             with self.tscope.function_scope(e.func), self.set_recurse_into_functions():
                 self.check_func_item(e.func, name=e.func.name, allow_empty=allow_empty)
 
@@ -6690,8 +6676,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
         # If we have found non-trivial restrictions from the regular comparisons,
         # then return soon. Otherwise try to infer restrictions involving `len(x)`.
         # TODO: support regular and len() narrowing in the same chain.
-        if any(m != ({}, {}) for m in partial_type_maps):
-            return reduce_conditional_maps(partial_type_maps)
+        if any(len(m[0]) or len(m[1]) for m in partial_type_maps):
+            return reduce_conditional_maps(partial_type_maps, use_meet=True)
         else:
             # Use meet for `and` maps to get correct results for chained checks
             # like `if 1 < len(x) < 4: ...`
@@ -6819,11 +6805,14 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi):
                     # It is correct to always narrow here. It improves behaviour on tests and
                     # detects many inaccurate type annotations on primer.
                     # However, because mypy does not currently check unreachable code, it feels
-                    # risky to narrow to unreachable without --warn-unreachable.
+                    # risky to narrow to unreachable without --warn-unreachable or not
+                    # at module level
                     # See also this specific primer comment, where I force primer to run with
                     # --warn-unreachable to see what code we would stop checking:
                     # https://github.com/python/mypy/pull/20660#issuecomment-3865794148
-                    if self.options.warn_unreachable or not is_unreachable_map(if_map):
+                    if (
+                        self.options.warn_unreachable and len(self.scope.stack) != 1
+                    ) or not is_unreachable_map(if_map):
                         all_if_maps.append(if_map)
 
         # Handle narrowing for operands with custom __eq__ methods specially
@@ -8747,7 +8736,13 @@ def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> Ty
     return result
 
 
-BUILTINS_CUSTOM_EQ_CHECKS: Final = {"builtins.bytearray", "builtins.memoryview"}
+BUILTINS_CUSTOM_EQ_CHECKS: Final = {
+    "builtins.bytearray",
+    "builtins.memoryview",
+    "builtins.frozenset",
+    "_collections_abc.dict_keys",
+    "_collections_abc.dict_items",
+}
 
 
 def has_custom_eq_checks(t: Type) -> bool:
@@ -8757,7 +8752,7 @@ def has_custom_eq_checks(t: Type) -> bool:
         # custom_special_method has special casing for builtins.* and typing.* that make the
         # above always return False. So here we return True if the a value of a builtin type
         # will ever compare equal to value of another type, e.g. a bytes value can compare equal
-        # to a bytearray value. We also include builtins collections, see testNarrowingCollections
+        # to a bytearray value.
         or (
             isinstance(pt := get_proper_type(t), Instance)
             and pt.type.fullname in BUILTINS_CUSTOM_EQ_CHECKS
