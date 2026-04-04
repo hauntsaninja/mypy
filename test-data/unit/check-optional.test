@@ -1369,5 +1369,5 @@ class NotSet: ...
 class Task:
     def with_opt(self, trn: CP | type[NotSet] | None):
         if trn is not NotSet:
-            reveal_type(trn)  # N: Revealed type is "Union[__main__.CP, Type[__main__.NotSet], None]"
+            reveal_type(trn)  # N: Revealed type is "__main__.CP | type[__main__.NotSet] | None"
 [builtins fixtures/tuple.pyi]

@@ -1699,7 +1699,7 @@ class Proto(Protocol):
 def foo(t: Callable[..., Proto]):
     t()
 
-foo(Proto)  # E: Argument 1 to "foo" has incompatible type "Type[Proto]"; expected "Callable[..., Proto]"
+foo(Proto)  # E: Argument 1 to "foo" has incompatible type "type[Proto]"; expected "Callable[..., Proto]"
 
 class Abstract(abc.ABC):
     @abc.abstractmethod
@@ -1708,4 +1708,4 @@ class Abstract(abc.ABC):
 def bar(t: Callable[..., Abstract]):
     t()
 
-bar(Abstract)  # E: Argument 1 to "bar" has incompatible type "Type[Abstract]"; expected "Callable[..., Abstract]"
+bar(Abstract)  # E: Argument 1 to "bar" has incompatible type "type[Abstract]"; expected "Callable[..., Abstract]"
