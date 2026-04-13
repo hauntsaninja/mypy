@@ -29,6 +29,7 @@ import types
 from collections.abc import Callable, Iterator, Mapping, Sequence, Set as AbstractSet
 from heapq import heappop, heappush
 from textwrap import dedent
+from threading import Thread
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -143,7 +144,8 @@ if TYPE_CHECKING:
 
 from mypy import errorcodes as codes
 from mypy.config_parser import get_config_module_names, parse_mypy_comments
-from mypy.fixup import fixup_module
+from mypy.fixer_state import fixer_state
+from mypy.fixup import NodeFixer
 from mypy.freetree import free_tree
 from mypy.fscache import FileSystemCache
 from mypy.known_modules import get_known_modules, reset_known_modules_cache
@@ -370,6 +372,7 @@ def build(
     extra_plugins = extra_plugins or []
 
     workers = []
+    connect_threads = []
     if options.num_workers > 0:
         # TODO: switch to something more efficient than pickle (also in the daemon).
         pickled_options = pickle.dumps(options.snapshot())
@@ -382,10 +385,17 @@ def build(
         buf = WriteBuffer()
         sources_message.write(buf)
         sources_data = buf.getvalue()
+
+        def connect(wc: WorkerClient, data: bytes) -> None:
+            # Start loading sources in each worker as soon as it is up.
+            wc.connect()
+            wc.conn.write_bytes(data)
+
+        # We don't wait for workers to be ready until they are actually needed.
         for worker in workers:
-            # Start loading graph in each worker as soon as it is up.
-            worker.connect()
-            worker.conn.write_bytes(sources_data)
+            thread = Thread(target=connect, args=(worker, sources_data))
+            thread.start()
+            connect_threads.append(thread)
 
     try:
         result = build_inner(
@@ -398,6 +408,7 @@ def build(
             stderr,
             extra_plugins,
             workers,
+            connect_threads,
         )
         result.errors = messages
         return result
@@ -411,6 +422,10 @@ def build(
         e.messages = messages
         raise
     finally:
+        # In case of an early crash it is better to wait for workers to become ready, and
+        # shut them down cleanly. Otherwise, they will linger until connection timeout.
+        for thread in connect_threads:
+            thread.join()
         for worker in workers:
             try:
                 send(worker.conn, SccRequestMessage(scc_id=None, import_errors={}, mod_data={}))
@@ -430,6 +445,7 @@ def build_inner(
     stderr: TextIO,
     extra_plugins: Sequence[Plugin],
     workers: list[WorkerClient],
+    connect_threads: list[Thread],
 ) -> BuildResult:
     if platform.python_implementation() == "CPython":
         # Run gc less frequently, as otherwise we can spend a large fraction of
@@ -485,7 +501,7 @@ def build_inner(
 
     reset_global_state()
     try:
-        graph = dispatch(sources, manager, stdout)
+        graph = dispatch(sources, manager, stdout, connect_threads)
         if not options.fine_grained_incremental:
             type_state.reset_all_subtype_caches()
         if options.timing_stats is not None:
@@ -495,9 +511,7 @@ def build_inner(
         warn_unused_configs(options, flush_errors)
         return BuildResult(manager, graph)
     finally:
-        t0 = time.time()
-        manager.metastore.commit()
-        manager.add_stats(cache_commit_time=time.time() - t0)
+        manager.commit()
         manager.log(
             "Build finished in %.3f seconds with %d modules, and %d errors"
             % (
@@ -812,6 +826,10 @@ class BuildManager:
         self.options = options
         self.version_id = version_id
         self.modules: dict[str, MypyFile] = {}
+        # Share same modules dictionary with the global fixer state.
+        # We need to set allow_missing when doing a fine-grained cache
+        # load because we need to gracefully handle missing modules.
+        fixer_state.node_fixer = NodeFixer(self.modules, self.options.use_fine_grained_cache)
         self.import_map: dict[str, set[str]] = {}
         self.missing_modules: dict[str, int] = {}
         self.fg_deps_meta: dict[str, FgDepMeta] = {}
@@ -877,7 +895,7 @@ class BuildManager:
                 ]
             )
 
-        self.metastore = create_metastore(options, parallel_worker)
+        self.metastore = create_metastore(options)
 
         # a mapping from source files to their corresponding shadow files
         # for efficient lookup
@@ -1114,6 +1132,11 @@ class BuildManager:
         if self.reports is not None and self.source_set.is_source(file):
             self.reports.file(file, self.modules, type_map, options)
 
+    def commit(self) -> None:
+        t0 = time.time()
+        self.metastore.commit()
+        self.add_stats(cache_commit_time=time.time() - t0)
+
     def verbosity(self) -> int:
         return self.options.verbosity
 
@@ -1151,6 +1174,24 @@ class BuildManager:
     def stats_summary(self) -> Mapping[str, object]:
         return self.stats
 
+    def broadcast(self, message: bytes) -> None:
+        """Broadcast same message to all workers in parallel."""
+        t0 = time.time()
+        threads = []
+        for worker in self.workers:
+            thread = Thread(target=worker.conn.write_bytes, args=(message,))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
+        self.add_stats(broadcast_time=time.time() - t0)
+
+    def wait_ack(self) -> None:
+        """Wait for an ack from all workers."""
+        for worker in self.workers:
+            buf = receive(worker.conn)
+            assert read_tag(buf) == ACK_MESSAGE
+
     def submit(self, graph: Graph, sccs: list[SCC]) -> None:
         """Submit a stale SCC for processing in current process or parallel workers."""
         if self.workers:
@@ -1171,6 +1212,7 @@ class BuildManager:
                 for mod_id in scc.mod_ids
                 if (path := graph[mod_id].xpath) in self.errors.recorded
             }
+            t0 = time.time()
             send(
                 self.workers[idx].conn,
                 SccRequestMessage(
@@ -1188,6 +1230,7 @@ class BuildManager:
                     },
                 ),
             )
+            self.add_stats(scc_send_time=time.time() - t0)
 
     def wait_for_done(
         self, graph: Graph
@@ -1216,8 +1259,13 @@ class BuildManager:
 
         done_sccs = []
         results = {}
-        for idx in ready_to_read([w.conn for w in self.workers], WORKER_DONE_TIMEOUT):
-            data = SccResponseMessage.read(receive(self.workers[idx].conn))
+        t0 = time.time()
+        ready = ready_to_read([w.conn for w in self.workers], WORKER_DONE_TIMEOUT)
+        t1 = time.time()
+        for idx in ready:
+            buf = receive(self.workers[idx].conn)
+            assert read_tag(buf) == SCC_RESPONSE_MESSAGE
+            data = SccResponseMessage.read(buf)
             self.free_workers.add(idx)
             scc_id = data.scc_id
             if data.blocker is not None:
@@ -1225,6 +1273,7 @@ class BuildManager:
             assert data.result is not None
             results.update(data.result)
             done_sccs.append(self.scc_by_id[scc_id])
+        self.add_stats(scc_wait_time=t1 - t0, scc_receive_time=time.time() - t1)
         self.submit_to_workers(graph)  # advance after some workers are free.
         return (
             done_sccs,
@@ -1616,13 +1665,10 @@ def exclude_from_backups(target_dir: str) -> None:
         pass
 
 
-def create_metastore(options: Options, parallel_worker: bool = False) -> MetadataStore:
+def create_metastore(options: Options) -> MetadataStore:
     """Create the appropriate metadata store."""
     if options.sqlite_cache:
-        # We use this flag in both coordinator and workers to speed up commits,
-        # see mypy.metastore.connect_db() for details.
-        sync_off = options.num_workers > 0 or parallel_worker
-        mds: MetadataStore = SqliteMetadataStore(_cache_dir_prefix(options), sync_off=sync_off)
+        mds: MetadataStore = SqliteMetadataStore(_cache_dir_prefix(options))
     else:
         mds = FilesystemMetadataStore(_cache_dir_prefix(options))
     return mds
@@ -2813,9 +2859,21 @@ class State:
 
     def fix_cross_refs(self) -> None:
         assert self.tree is not None, "Internal error: method must be called on parsed file only"
-        # We need to set allow_missing when doing a fine-grained cache
-        # load because we need to gracefully handle missing modules.
-        fixup_module(self.tree, self.manager.modules, self.options.use_fine_grained_cache)
+        # Do initial lightweight pass fixing TypeInfos and module cross-references.
+        assert fixer_state.node_fixer is not None
+        fixer_state.node_fixer.visit_symbol_table(self.tree.names)
+        type_fixer = fixer_state.node_fixer.type_fixer
+        # Eagerly fix shared instances, before they are used by named_type() calls.
+        if instance_cache.str_type is not None:
+            instance_cache.str_type.accept(type_fixer)
+        if instance_cache.function_type is not None:
+            instance_cache.function_type.accept(type_fixer)
+        if instance_cache.int_type is not None:
+            instance_cache.int_type.accept(type_fixer)
+        if instance_cache.bool_type is not None:
+            instance_cache.bool_type.accept(type_fixer)
+        if instance_cache.object_type is not None:
+            instance_cache.object_type.accept(type_fixer)
 
     # Methods for processing modules from source code.
 
@@ -3669,7 +3727,12 @@ def log_configuration(manager: BuildManager, sources: list[BuildSource]) -> None
 # The driver
 
 
-def dispatch(sources: list[BuildSource], manager: BuildManager, stdout: TextIO) -> Graph:
+def dispatch(
+    sources: list[BuildSource],
+    manager: BuildManager,
+    stdout: TextIO,
+    connect_threads: list[Thread],
+) -> Graph:
     log_configuration(manager, sources)
 
     t0 = time.time()
@@ -3726,7 +3789,7 @@ def dispatch(sources: list[BuildSource], manager: BuildManager, stdout: TextIO) 
         dump_graph(graph, stdout)
         return graph
 
-    # Fine grained dependencies that didn't have an associated module in the build
+    # Fine-grained dependencies that didn't have an associated module in the build
     # are serialized separately, so we read them after we load the graph.
     # We need to read them both for running in daemon mode and if we are generating
     # a fine-grained cache (so that we can properly update them incrementally).
@@ -3739,25 +3802,28 @@ def dispatch(sources: list[BuildSource], manager: BuildManager, stdout: TextIO) 
         if fg_deps_meta is not None:
             manager.fg_deps_meta = fg_deps_meta
         elif manager.stats.get("fresh_metas", 0) > 0:
-            # Clear the stats so we don't infinite loop because of positive fresh_metas
+            # Clear the stats, so we don't infinite loop because of positive fresh_metas
             manager.stats.clear()
             # There were some cache files read, but no fine-grained dependencies loaded.
             manager.log("Error reading fine-grained dependencies cache -- aborting cache load")
             manager.cache_enabled = False
             manager.log("Falling back to full run -- reloading graph...")
-            return dispatch(sources, manager, stdout)
+            return dispatch(sources, manager, stdout, connect_threads)
 
     # If we are loading a fine-grained incremental mode cache, we
     # don't want to do a real incremental reprocess of the
     # graph---we'll handle it all later.
     if not manager.use_fine_grained_cache():
+        # Wait for workers since they may be needed at this point.
+        for thread in connect_threads:
+            thread.join()
         process_graph(graph, manager)
         # Update plugins snapshot.
         write_plugins_snapshot(manager)
         manager.old_plugins_snapshot = manager.plugins_snapshot
         if manager.options.cache_fine_grained or manager.options.fine_grained_incremental:
-            # If we are running a daemon or are going to write cache for further fine grained use,
-            # then we need to collect fine grained protocol dependencies.
+            # If we are running a daemon or are going to write cache for further fine-grained use,
+            # then we need to collect fine-grained protocol dependencies.
             # Since these are a global property of the program, they are calculated after we
             # processed the whole graph.
             type_state.add_all_protocol_deps(manager.fg_deps)
@@ -4150,9 +4216,8 @@ def process_graph(graph: Graph, manager: BuildManager) -> None:
     buf = WriteBuffer()
     graph_message.write(buf)
     graph_data = buf.getvalue()
-    for worker in manager.workers:
-        AckMessage.read(receive(worker.conn))
-        worker.conn.write_bytes(graph_data)
+    manager.wait_ack()
+    manager.broadcast(graph_data)
 
     sccs = sorted_components(graph)
     manager.log(
@@ -4170,11 +4235,9 @@ def process_graph(graph: Graph, manager: BuildManager) -> None:
     buf = WriteBuffer()
     sccs_message.write(buf)
     sccs_data = buf.getvalue()
-    for worker in manager.workers:
-        AckMessage.read(receive(worker.conn))
-        worker.conn.write_bytes(sccs_data)
-    for worker in manager.workers:
-        AckMessage.read(receive(worker.conn))
+    manager.wait_ack()
+    manager.broadcast(sccs_data)
+    manager.wait_ack()
 
     manager.free_workers = set(range(manager.options.num_workers))
 
@@ -4606,7 +4669,6 @@ class AckMessage(IPCMessage):
 
     @classmethod
     def read(cls, buf: ReadBuffer) -> AckMessage:
-        assert read_tag(buf) == ACK_MESSAGE
         return AckMessage()
 
     def write(self, buf: WriteBuffer) -> None:
@@ -4633,7 +4695,6 @@ class SccRequestMessage(IPCMessage):
 
     @classmethod
     def read(cls, buf: ReadBuffer) -> SccRequestMessage:
-        assert read_tag(buf) == SCC_REQUEST_MESSAGE
         return SccRequestMessage(
             scc_id=read_int_opt(buf),
             import_errors={
@@ -4694,7 +4755,6 @@ class SccResponseMessage(IPCMessage):
 
     @classmethod
     def read(cls, buf: ReadBuffer) -> SccResponseMessage:
-        assert read_tag(buf) == SCC_RESPONSE_MESSAGE
         scc_id = read_int(buf)
         tag = read_tag(buf)
         if tag == LITERAL_NONE:
@@ -4739,7 +4799,6 @@ class SourcesDataMessage(IPCMessage):
 
     @classmethod
     def read(cls, buf: ReadBuffer) -> SourcesDataMessage:
-        assert read_tag(buf) == SOURCES_DATA_MESSAGE
         sources = [
             BuildSource(
                 read_str_opt(buf),
@@ -4771,7 +4830,6 @@ class SccsDataMessage(IPCMessage):
 
     @classmethod
     def read(cls, buf: ReadBuffer) -> SccsDataMessage:
-        assert read_tag(buf) == SCCS_DATA_MESSAGE
         sccs = [
             SCC(set(read_str_list(buf)), read_int(buf), read_int_list(buf))
             for _ in range(read_int_bare(buf))
@@ -4799,7 +4857,6 @@ class GraphMessage(IPCMessage):
     @classmethod
     def read(cls, buf: ReadBuffer, manager: BuildManager | None = None) -> GraphMessage:
         assert manager is not None
-        assert read_tag(buf) == GRAPH_MESSAGE
         graph = {read_str_bare(buf): State.read(buf, manager) for _ in range(read_int_bare(buf))}
         missing_modules = {read_str_bare(buf): read_int(buf) for _ in range(read_int_bare(buf))}
         message = GraphMessage(graph=graph, missing_modules=missing_modules)

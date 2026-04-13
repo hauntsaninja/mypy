@@ -24,10 +24,15 @@ import time
 from typing import NamedTuple
 
 from librt.base64 import b64decode
+from librt.internal import ReadBuffer, read_tag
 
 from mypy import util
 from mypy.build import (
+    GRAPH_MESSAGE,
     SCC,
+    SCC_REQUEST_MESSAGE,
+    SCCS_DATA_MESSAGE,
+    SOURCES_DATA_MESSAGE,
     AckMessage,
     BuildManager,
     Graph,
@@ -39,10 +44,11 @@ from mypy.build import (
     load_plugins,
     process_stale_scc,
 )
-from mypy.defaults import RECURSION_LIMIT, WORKER_CONNECTION_TIMEOUT
+from mypy.cache import Tag, read_int_opt
+from mypy.defaults import RECURSION_LIMIT, WORKER_CONNECTION_TIMEOUT, WORKER_IDLE_TIMEOUT
 from mypy.errors import CompileError, ErrorInfo, Errors, report_internal_error
 from mypy.fscache import FileSystemCache
-from mypy.ipc import IPCException, IPCServer, receive, send
+from mypy.ipc import IPCException, IPCServer, ready_to_read, receive, send
 from mypy.modulefinder import BuildSource, BuildSourceSet, compute_search_paths
 from mypy.nodes import FileRawData
 from mypy.options import Options
@@ -113,6 +119,16 @@ def main(argv: list[str]) -> None:
         util.hard_exit(0)
 
 
+def should_shutdown(buf: ReadBuffer, expected_tag: Tag) -> bool:
+    """Check if the message is a shutdown request."""
+    tag = read_tag(buf)
+    if tag == SCC_REQUEST_MESSAGE:
+        assert read_int_opt(buf) is None
+        return True
+    assert tag == expected_tag, f"Unexpected tag: {tag}"
+    return False
+
+
 def serve(server: IPCServer, ctx: ServerContext) -> None:
     """Main server loop of the worker.
 
@@ -120,14 +136,20 @@ def serve(server: IPCServer, ctx: ServerContext) -> None:
     SCC checking request and reply to client (coordinator). See module
     docstring for more details on the protocol.
     """
-    sources = SourcesDataMessage.read(receive(server)).sources
+    buf = receive(server)
+    if should_shutdown(buf, SOURCES_DATA_MESSAGE):
+        return
+    sources = SourcesDataMessage.read(buf).sources
     manager = setup_worker_manager(sources, ctx)
     if manager is None:
         return
 
     # Notify coordinator we are done with setup.
     send(server, AckMessage())
-    graph_data = GraphMessage.read(receive(server), manager)
+    buf = receive(server)
+    if should_shutdown(buf, GRAPH_MESSAGE):
+        return
+    graph_data = GraphMessage.read(buf, manager)
     # Update some manager data in-place as it has been passed to semantic analyzer.
     manager.missing_modules |= graph_data.missing_modules
     graph = graph_data.graph
@@ -138,14 +160,23 @@ def serve(server: IPCServer, ctx: ServerContext) -> None:
 
     # Notify coordinator we are ready to receive computed graph SCC structure.
     send(server, AckMessage())
-    sccs = SccsDataMessage.read(receive(server)).sccs
+    buf = receive(server)
+    if should_shutdown(buf, SCCS_DATA_MESSAGE):
+        return
+    sccs = SccsDataMessage.read(buf).sccs
     manager.scc_by_id = {scc.id: scc for scc in sccs}
     manager.top_order = [scc.id for scc in sccs]
 
     # Notify coordinator we are ready to start processing SCCs.
     send(server, AckMessage())
     while True:
-        scc_message = SccRequestMessage.read(receive(server))
+        t0 = time.time()
+        ready_to_read([server], WORKER_IDLE_TIMEOUT)
+        t1 = time.time()
+        buf = receive(server)
+        assert read_tag(buf) == SCC_REQUEST_MESSAGE
+        scc_message = SccRequestMessage.read(buf)
+        manager.add_stats(scc_wait_time=t1 - t0, scc_receive_time=time.time() - t1)
         scc_id = scc_message.scc_id
         if scc_id is None:
             manager.dump_stats()
@@ -166,11 +197,13 @@ def serve(server: IPCServer, ctx: ServerContext) -> None:
                 gc.enable()
             result = process_stale_scc(graph, scc, manager, from_cache=graph_data.from_cache)
             # We must commit after each SCC, otherwise we break --sqlite-cache.
-            manager.metastore.commit()
+            manager.commit()
         except CompileError as blocker:
             send(server, SccResponseMessage(scc_id=scc_id, blocker=blocker))
         else:
+            t1 = time.time()
             send(server, SccResponseMessage(scc_id=scc_id, result=result))
+            manager.add_stats(scc_send_time=time.time() - t1)
         manager.add_stats(total_process_stale_time=time.time() - t0, stale_sccs_processed=1)
 
 
