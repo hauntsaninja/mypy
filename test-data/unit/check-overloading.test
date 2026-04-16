@@ -5543,7 +5543,7 @@ reveal_type(f5(C()))  # N: Revealed type is "__main__.C"
 reveal_type(f5(D()))  # N: Revealed type is "__main__.D"
 
 [case testOverloadIfSysVersion]
-# flags: --python-version 3.9
+# flags: --python-version 3.10
 from typing import overload
 import sys
 
@@ -5574,11 +5574,7 @@ if sys.version_info >= (3, 10):
     def f2(g: C) -> C: ...
 def f2(g): ...
 reveal_type(f2(A()))  # N: Revealed type is "__main__.A"
-reveal_type(f2(C()))  # E: No overload variant of "f2" matches argument type "C" \
-    # N: Possible overload variants: \
-    # N:     def f2(g: A) -> A \
-    # N:     def f2(g: B) -> B \
-    # N: Revealed type is "Any"
+reveal_type(f2(C()))  # N: Revealed type is "__main__.C"
 [builtins fixtures/ops.pyi]
 
 [case testOverloadIfMerging]
