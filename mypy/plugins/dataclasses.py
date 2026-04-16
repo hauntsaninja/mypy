@@ -249,7 +249,6 @@ class DataclassTransformer:
             "slots": self._get_bool_arg("slots", False),
             "match_args": self._get_bool_arg("match_args", True),
         }
-        py_version = self._api.options.python_version
 
         # If there are no attributes, it may be that the semantic analyzer has not
         # processed them yet. In order to work around this, we can simply skip generating
