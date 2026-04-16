@@ -3131,6 +3131,55 @@ def main(key: str):
         reveal_type(existing_value_type(Box2("str")))  # N: Revealed type is "__main__.TupleLike[builtins.str] | Any"
 [builtins fixtures/tuple.pyi]
 
+[case testNarrowingDynamicAnyMemberAssignment]
+from enum import Enum
+from typing import Any
+
+class Fruit(Enum):
+    APPLE = 1
+    ORANGE = 2
+
+def f(a: Any, x: Any, y: Any) -> None:
+    if x is not list:
+        x = []
+    reveal_type(x)  # N: Revealed type is "builtins.list[Any] | Overload(def [T] () -> builtins.list[T`1], def [T] (x: typing.Iterable[T`1]) -> builtins.list[T`1])"
+
+    if y is list:
+        pass
+    else:
+        y = []
+    reveal_type(y)  # N: Revealed type is "Overload(def [T] () -> builtins.list[T`1], def [T] (x: typing.Iterable[T`1]) -> builtins.list[T`1]) | builtins.list[Any]"
+
+    if a.foo is not list:
+        a.foo = []
+    reveal_type(a.foo)  # N: Revealed type is "builtins.list[Any] | Overload(def [T] () -> builtins.list[T`1], def [T] (x: typing.Iterable[T`1]) -> builtins.list[T`1])"
+    a.foo.append(x)  # E: Missing positional argument "self" in call to "append" of "list"
+
+    if a.baz is list:
+        pass
+    else:
+        a.baz = []
+    reveal_type(a.baz)  # N: Revealed type is "Overload(def [T] () -> builtins.list[T`1], def [T] (x: typing.Iterable[T`1]) -> builtins.list[T`1]) | builtins.list[Any]"
+
+    if a.bar is not Fruit.APPLE:
+        a.bar = []
+    reveal_type(a.bar)  # N: Revealed type is "builtins.list[Any] | Literal[__main__.Fruit.APPLE]"
+[builtins fixtures/list.pyi]
+
+[case testNarrowingExplicitAnyMemberAssignment]
+from typing import Any
+
+class A:
+    foo: Any
+
+def f(a: A) -> None:
+    if a.foo is not list:
+        a.foo = []
+    reveal_type(a.foo)  # N: Revealed type is "builtins.list[Any] | Overload(def [T] () -> builtins.list[T`1], def [T] (x: typing.Iterable[T`1]) -> builtins.list[T`1])"
+    a.foo.append(1)  # E: Missing positional argument "x" in call to "append" of "list" \
+                     # E: Argument 1 to "append" of "list" has incompatible type "int"; expected "list[Never]"
+[builtins fixtures/list.pyi]
+
 [case testNarrowingCollections]
 # flags: --strict-equality --warn-unreachable
 from typing import cast

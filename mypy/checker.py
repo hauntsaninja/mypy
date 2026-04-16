@@ -5172,6 +5172,8 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                     self.msg.deleted_as_rvalue(t, s)
 
                 if_map, else_map = self.find_isinstance_check(e)
+                self.binder.record_conditional_type_map(if_map)
+                self.binder.record_conditional_type_map(else_map)
 
                 s.unreachable_else = is_unreachable_map(else_map)
 
