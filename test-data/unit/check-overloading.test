@@ -5558,7 +5558,7 @@ class C: ...
 
 @overload
 def f1(g: A) -> A: ...
-if sys.version_info >= (3, 9):
+if sys.version_info >= (3, 10):
     @overload
     def f1(g: B) -> B: ...
 def f1(g): ...
@@ -5569,12 +5569,16 @@ reveal_type(f1(B()))  # N: Revealed type is "__main__.B"
 def f2(g: A) -> A: ...
 @overload
 def f2(g: B) -> B: ...
-if sys.version_info >= (3, 10):
+if sys.version_info >= (3, 11):
     @overload
     def f2(g: C) -> C: ...
 def f2(g): ...
 reveal_type(f2(A()))  # N: Revealed type is "__main__.A"
-reveal_type(f2(C()))  # N: Revealed type is "__main__.C"
+reveal_type(f2(C()))  # E: No overload variant of "f2" matches argument type "C" \
+    # N: Possible overload variants: \
+    # N:     def f2(g: A) -> A \
+    # N:     def f2(g: B) -> B \
+    # N: Revealed type is "Any"
 [builtins fixtures/ops.pyi]
 
 [case testOverloadIfMerging]
