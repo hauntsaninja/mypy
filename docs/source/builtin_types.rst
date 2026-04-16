@@ -77,17 +77,5 @@ Type                   Description
 ``Tuple[int, int]``    tuple of two ``int`` objects (``Tuple[()]`` is the empty tuple)
 ``Tuple[int, ...]``    tuple of an arbitrary number of ``int`` objects
 ``Dict[str, int]``     dictionary from ``str`` keys to ``int`` values
-``Iterable[int]``      iterable object containing ints
-``Sequence[bool]``     sequence of booleans (read-only)
-``Mapping[str, int]``  mapping from ``str`` keys to ``int`` values (read-only)
 ``Type[C]``            type object of ``C`` (``C`` is a class/type variable/union of types)
 ====================== ===============================
-
-``List`` is an alias for the built-in type ``list`` that supports
-indexing (and similarly for ``dict``/``Dict`` and
-``tuple``/``Tuple``).
-
-Note that even though ``Iterable``, ``Sequence`` and ``Mapping`` look
-similar to abstract base classes defined in :py:mod:`collections.abc`
-(formerly ``collections``), they are not identical, since the latter
-didn't support indexing prior to Python 3.9.
