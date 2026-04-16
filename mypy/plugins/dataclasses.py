@@ -372,11 +372,8 @@ class DataclassTransformer:
 
         self.reset_init_only_vars(info, attributes)
 
-        if (
-            decorator_arguments["match_args"]
-            and (
-                "__match_args__" not in info.names or info.names["__match_args__"].plugin_generated
-            )
+        if decorator_arguments["match_args"] and (
+            "__match_args__" not in info.names or info.names["__match_args__"].plugin_generated
         ):
             str_type = self._api.named_type("builtins.str")
             literals: list[Type] = [
