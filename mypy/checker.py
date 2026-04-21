@@ -6861,13 +6861,13 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                     narrowable_expr_type = try_expanding_sum_type_to_union(
                         coerce_to_literal(narrowable_expr_type), None
                     )
+                    narrowing_target_type = self.broaden_equality_target_type(
+                        narrowable_expr_type, target_type
+                    )
                     if_type, else_type = conditional_types(
                         narrowable_expr_type,
-                        [TypeRange(target_type, is_upper_bound=False)],
+                        [TypeRange(narrowing_target_type, is_upper_bound=False)],
                         from_equality=True,
-                    )
-                    if_type = self.extend_if_type_with_closed_equality_domain(
-                        narrowable_expr_type, target_type, if_type
                     )
                     if ambiguous_expr_type is not None:
                         if_type = make_simplified_union(
@@ -6969,14 +6969,14 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                         narrowable_expr_type = coerce_to_literal(
                             try_expanding_sum_type_to_union(narrowable_expr_type, None)
                         )
+                        narrowing_target_type = self.broaden_equality_target_type(
+                            narrowable_expr_type, target_type
+                        )
                         if_type, else_type = conditional_types(
                             narrowable_expr_type,
-                            [TypeRange(target_type, is_upper_bound=False)],
+                            [TypeRange(narrowing_target_type, is_upper_bound=False)],
                             default=narrowable_expr_type,
                             from_equality=True,
-                        )
-                        if_type = self.extend_if_type_with_closed_equality_domain(
-                            narrowable_expr_type, target_type, if_type
                         )
                         if ambiguous_expr_type is not None:
                             if_type = make_simplified_union([if_type, ambiguous_expr_type])
@@ -7059,37 +7059,21 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         else_map = reduce_or_conditional_type_maps(all_else_maps)
         return if_map, else_map
 
-    @overload
-    def extend_if_type_with_closed_equality_domain(
-        self, current_type: Type, target_type: Type, if_type: None
-    ) -> Type | None: ...
-
-    @overload
-    def extend_if_type_with_closed_equality_domain(
-        self, current_type: Type, target_type: Type, if_type: Type
-    ) -> Type: ...
-
-    def extend_if_type_with_closed_equality_domain(
-        self, current_type: Type, target_type: Type, if_type: Type | None
-    ) -> Type | None:
-        """Add closed-domain alternatives for object equality narrowing."""
+    def broaden_equality_target_type(self, current_type: Type, target_type: Type) -> Type:
+        """Include closed-domain peers when narrowing object equality."""
         current_type = get_proper_type(current_type)
         if not (
-            isinstance(current_type, Instance)
-            and current_type.type.fullname == "builtins.object"
+            isinstance(current_type, Instance) and current_type.type.fullname == "builtins.object"
         ):
-            return if_type
+            return target_type
 
         domain_type_names = closed_equality_domain_type_names(equality_value_info(target_type))
         if not domain_type_names:
-            return if_type
+            return target_type
 
-        closed_domain_type = make_simplified_union(
-            [self.named_type(fullname) for fullname in domain_type_names]
+        return UnionType.make_union(
+            [target_type, *(self.named_type(fullname) for fullname in domain_type_names)]
         )
-        if if_type is None:
-            return closed_domain_type
-        return make_simplified_union([if_type, closed_domain_type])
 
     def propagate_up_typemap_info(self, new_types: TypeMap) -> TypeMap:
         """Attempts refining parent expressions of any MemberExpr or IndexExprs in new_types.
@@ -9690,10 +9674,7 @@ CLOSED_VALUE_EQUALITY_DOMAINS: Final = {
     "builtins.memoryview": "builtins.bytes",
 }
 
-VALUE_EQUALITY_DOMAINS: Final = {
-    **OPEN_VALUE_EQUALITY_DOMAINS,
-    **CLOSED_VALUE_EQUALITY_DOMAINS,
-}
+VALUE_EQUALITY_DOMAINS: Final = {**OPEN_VALUE_EQUALITY_DOMAINS, **CLOSED_VALUE_EQUALITY_DOMAINS}
 
 
 class EqualityValueInfo(NamedTuple):
@@ -9795,10 +9776,7 @@ def equality_value_info(t: Type) -> EqualityValueInfo:
 
         enum_types = {t.type.fullname} if t.type.is_enum else set()
         return EqualityValueInfo(
-            enum_types,
-            value_domains,
-            has_non_enum=not enum_types,
-            is_top=False,
+            enum_types, value_domains, has_non_enum=not enum_types, is_top=False
         )
     if isinstance(t, AnyType):
         return EqualityValueInfo(set(), {}, has_non_enum=False, is_top=True)
