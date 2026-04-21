@@ -3917,3 +3917,35 @@ def bar(cls: type[Types.A | Types.B]) -> None:
         case _:
             assert_never(cls)
 [builtins fixtures/tuple.pyi]
+
+
+[case testMatchEnumOrdering]
+# flags: --strict-equality --warn-unreachable
+# Regression test for https://github.com/python/mypy/issues/21187
+import enum
+from typing import Literal
+
+class DummyClass: ...
+
+class MyEnum(enum.StrEnum):
+    RELEVANT = "relevant"
+    IGNORED = "ignored"
+
+def dummy_class_then_enum(arg: DummyClass | Literal[MyEnum.RELEVANT]):
+    match arg:
+        case DummyClass():
+            reveal_type(arg)  # N: Revealed type is "__main__.DummyClass"
+        case MyEnum.RELEVANT:
+            reveal_type(arg)  # N: Revealed type is "Literal[__main__.MyEnum.RELEVANT]"
+        case _:
+            pass  # E: Statement is unreachable
+
+def enum_then_dummy_class(arg: DummyClass | Literal[MyEnum.RELEVANT]):
+    match arg:
+        case MyEnum.RELEVANT:
+            reveal_type(arg)  # N: Revealed type is "Literal[__main__.MyEnum.RELEVANT]"
+        case DummyClass():
+            reveal_type(arg)  # N: Revealed type is "__main__.DummyClass"
+        case _:
+            pass  # E: Statement is unreachable
+[builtins fixtures/tuple.pyi]
