@@ -8609,17 +8609,10 @@ def conditional_types(
         # We erase generic args because values with different generic types can compare equal
         # For instance, cast(list[str], []) and cast(list[int], [])
         proposed_type = shallow_erase_type_for_equality(proposed_type)
-        if not is_overlapping_types(current_type, proposed_type, ignore_promotions=False):
-            # Equality narrowing is one of the places at runtime where subtyping with promotion
-            # does happen to match runtime semantics
-            # Expression is never of any type in proposed_type_ranges
-            return UninhabitedType(), default
-        if not is_overlapping_types(current_type, proposed_type, ignore_promotions=True):
-            return default, default
-    else:
-        if not is_overlapping_types(current_type, proposed_type, ignore_promotions=True):
-            # Expression is never of any type in proposed_type_ranges
-            return UninhabitedType(), default
+
+    if not is_overlapping_types(current_type, proposed_type, ignore_promotions=True):
+        # Expression is never of any type in proposed_type_ranges
+        return UninhabitedType(), default
 
     # we can only restrict when the type is precise, not bounded
     proposed_precise_type = UnionType.make_union(
@@ -9679,13 +9672,22 @@ class VarAssignVisitor(TraverserVisitor):
             self.lvalue = False
 
 
-NUMERIC_VALUE_EQUALITY_TYPES: Final = frozenset(
-    {"builtins.bool", "builtins.int", "builtins.float", "builtins.complex"}
-)
+# Open domains also block cross-type narrowing for known domain members, but they
+# don't provide an exhaustive union to narrow top types to.
+OPEN_VALUE_EQUALITY_DOMAINS: Final = {
+    "builtins.str": ("builtins.str",),
+    "builtins.numeric": (
+        "builtins.bool",
+        "builtins.int",
+        "builtins.float",
+        "builtins.complex",
+    ),
+}
 
-# Open domains only block narrowing when an enum-backed value participates.
 OPEN_VALUE_EQUALITY_TYPE_DOMAINS: Final = {
-    "builtins.str": "builtins.str",
+    fullname: domain
+    for domain, fullnames in OPEN_VALUE_EQUALITY_DOMAINS.items()
+    for fullname in fullnames
 }
 
 # Closed domains also block ordinary cross-type narrowing within the domain.
@@ -9704,6 +9706,7 @@ class EqualityValueInfo(NamedTuple):
     enum_types: set[str]
     closed_domains: set[str]
     open_domains: set[str]
+    domain_type_names: dict[str, set[str]]
     has_non_enum: bool
     is_top: bool
 
@@ -9715,6 +9718,15 @@ def closed_equality_domain_type_names(info: EqualityValueInfo) -> list[str]:
         if domain in info.closed_domains
         for fullname in fullnames
     ]
+
+
+def has_distinct_equality_domain_types(
+    left_info: EqualityValueInfo, right_info: EqualityValueInfo, domains: set[str]
+) -> bool:
+    return any(
+        left_info.domain_type_names.get(domain) != right_info.domain_type_names.get(domain)
+        for domain in domains
+    )
 
 
 def partition_equality_ambiguous_types(
@@ -9766,7 +9778,13 @@ def is_equality_ambiguous_for_narrowing(left: Type, right: Type) -> bool:
     if left_is_only_enum and right_is_only_enum and left_info.enum_types == right_info.enum_types:
         return False
 
-    if shared_closed_domains and not is_same_type(left, right):
+    if shared_closed_domains and has_distinct_equality_domain_types(
+        left_info, right_info, shared_closed_domains
+    ):
+        return True
+    if shared_open_domains and has_distinct_equality_domain_types(
+        left_info, right_info, shared_open_domains
+    ):
         return True
     if not (left_info.enum_types or right_info.enum_types):
         return False
@@ -9789,49 +9807,49 @@ def equality_value_info(t: Type) -> EqualityValueInfo:
     if isinstance(t, Instance):
         if t.type.fullname == "builtins.object":
             return EqualityValueInfo(
-                set(), set(), set(), has_non_enum=False, is_top=True
+                set(), set(), set(), {}, has_non_enum=False, is_top=True
             )
 
-        open_domains = {
-            domain
-            for fullname, domain in OPEN_VALUE_EQUALITY_TYPE_DOMAINS.items()
-            if t.type.has_base(fullname)
-        }
-        closed_domains = {
-            domain
-            for fullname, domain in CLOSED_VALUE_EQUALITY_TYPE_DOMAINS.items()
-            if t.type.has_base(fullname)
-        }
-        if any(t.type.has_base(fullname) for fullname in NUMERIC_VALUE_EQUALITY_TYPES):
-            open_domains.add("builtins.numeric")
+        open_domains = set()
+        closed_domains = set()
+        for base in t.type.mro:
+            if domain := OPEN_VALUE_EQUALITY_TYPE_DOMAINS.get(base.fullname):
+                open_domains.add(domain)
+            if domain := CLOSED_VALUE_EQUALITY_TYPE_DOMAINS.get(base.fullname):
+                closed_domains.add(domain)
+        domain_type_names = {domain: {t.type.fullname} for domain in open_domains | closed_domains}
 
         enum_types = {t.type.fullname} if t.type.is_enum else set()
         return EqualityValueInfo(
             enum_types,
             closed_domains,
             open_domains,
+            domain_type_names,
             has_non_enum=not enum_types,
             is_top=False,
         )
     if isinstance(t, AnyType):
-        return EqualityValueInfo(set(), set(), set(), has_non_enum=False, is_top=True)
-    return EqualityValueInfo(set(), set(), set(), has_non_enum=False, is_top=False)
+        return EqualityValueInfo(set(), set(), set(), {}, has_non_enum=False, is_top=True)
+    return EqualityValueInfo(set(), set(), set(), {}, has_non_enum=False, is_top=False)
 
 
 def combine_equality_value_info(infos: Iterable[EqualityValueInfo]) -> EqualityValueInfo:
     enum_types: set[str] = set()
     closed_domains: set[str] = set()
     open_domains: set[str] = set()
+    domain_type_names: dict[str, set[str]] = defaultdict(set)
     has_non_enum = False
     is_top = False
     for info in infos:
         enum_types.update(info.enum_types)
         closed_domains.update(info.closed_domains)
         open_domains.update(info.open_domains)
+        for domain, type_names in info.domain_type_names.items():
+            domain_type_names[domain].update(type_names)
         has_non_enum = has_non_enum or info.has_non_enum
         is_top = is_top or info.is_top
     return EqualityValueInfo(
-        enum_types, closed_domains, open_domains, has_non_enum, is_top
+        enum_types, closed_domains, open_domains, dict(domain_type_names), has_non_enum, is_top
     )
 
 

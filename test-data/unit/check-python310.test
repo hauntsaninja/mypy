@@ -43,7 +43,7 @@ match m:
 def foo(m: bool, x: int):
     match m:
         case 1:
-            reveal_type(m)  # N: Revealed type is "Literal[1]"
+            reveal_type(m)  # N: Revealed type is "builtins.bool"
 
     match m:
         case x:

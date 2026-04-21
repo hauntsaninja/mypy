@@ -3764,14 +3764,13 @@ from typing import TypeVar, Any, Type
 
 TargetType = TypeVar("TargetType", int, float, str)
 
-# TODO: this behaviour is incorrect, it will be fixed by improving reachability
 def convert_type(target_type: Type[TargetType]) -> TargetType:
     if target_type == str:
         return str()
     if target_type == int:
         return int()
     if target_type == float:
-        return float()  # E: Incompatible return value type (got "float", expected "int")
+        return float()
     raise
 
 
@@ -3795,7 +3794,7 @@ def f2(number: float, five: Literal[5]):
 
 def f3(number: float | int, five: Literal[5]):
     if number == five:
-        reveal_type(number)  # N: Revealed type is "builtins.float | Literal[5]"
+        reveal_type(number)  # N: Revealed type is "Literal[5] | builtins.float"
         reveal_type(five)  # N: Revealed type is "Literal[5]"
 
 def f8(number: float | Literal[5], five: Literal[5]):
