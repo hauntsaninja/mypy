@@ -9675,31 +9675,24 @@ class VarAssignVisitor(TraverserVisitor):
 # Open domains also block cross-type narrowing for known domain members, but they
 # don't provide an exhaustive union to narrow top types to.
 OPEN_VALUE_EQUALITY_DOMAINS: Final = {
-    "builtins.str": ("builtins.str",),
-    "builtins.numeric": (
-        "builtins.bool",
-        "builtins.int",
-        "builtins.float",
-        "builtins.complex",
-    ),
+    "builtins.str": "builtins.str",
+    "builtins.bool": "builtins.numeric",
+    "builtins.int": "builtins.numeric",
+    "builtins.float": "builtins.numeric",
+    "builtins.complex": "builtins.numeric",
 }
-OPEN_VALUE_EQUALITY_DOMAIN_NAMES: Final = frozenset(OPEN_VALUE_EQUALITY_DOMAINS)
-
-OPEN_VALUE_EQUALITY_TYPE_DOMAINS: Final = {
-    fullname: domain
-    for domain, fullnames in OPEN_VALUE_EQUALITY_DOMAINS.items()
-    for fullname in fullnames
-}
+OPEN_VALUE_EQUALITY_DOMAIN_NAMES: Final = frozenset(OPEN_VALUE_EQUALITY_DOMAINS.values())
 
 # Closed domains also block ordinary cross-type narrowing within the domain.
 CLOSED_VALUE_EQUALITY_DOMAINS: Final = {
-    "builtins.bytes": ("builtins.bytes", "builtins.bytearray", "builtins.memoryview"),
+    "builtins.bytes": "builtins.bytes",
+    "builtins.bytearray": "builtins.bytes",
+    "builtins.memoryview": "builtins.bytes",
 }
 
-CLOSED_VALUE_EQUALITY_TYPE_DOMAINS: Final = {
-    fullname: domain
-    for domain, fullnames in CLOSED_VALUE_EQUALITY_DOMAINS.items()
-    for fullname in fullnames
+VALUE_EQUALITY_DOMAINS: Final = {
+    **OPEN_VALUE_EQUALITY_DOMAINS,
+    **CLOSED_VALUE_EQUALITY_DOMAINS,
 }
 
 
@@ -9713,9 +9706,8 @@ class EqualityValueInfo(NamedTuple):
 def closed_equality_domain_type_names(info: EqualityValueInfo) -> list[str]:
     return [
         fullname
-        for domain, fullnames in CLOSED_VALUE_EQUALITY_DOMAINS.items()
+        for fullname, domain in CLOSED_VALUE_EQUALITY_DOMAINS.items()
         if domain in info.value_domains
-        for fullname in fullnames
     ]
 
 
@@ -9798,12 +9790,8 @@ def equality_value_info(t: Type) -> EqualityValueInfo:
 
         value_domains = {}
         for base in t.type.mro:
-            for type_domains in (
-                OPEN_VALUE_EQUALITY_TYPE_DOMAINS,
-                CLOSED_VALUE_EQUALITY_TYPE_DOMAINS,
-            ):
-                if domain := type_domains.get(base.fullname):
-                    value_domains[domain] = {t.type.fullname}
+            if domain := VALUE_EQUALITY_DOMAINS.get(base.fullname):
+                value_domains[domain] = {t.type.fullname}
 
         enum_types = {t.type.fullname} if t.type.is_enum else set()
         return EqualityValueInfo(
