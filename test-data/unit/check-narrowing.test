@@ -2608,7 +2608,7 @@ class BE(bytes, Enum):
 
 def f1(x: object) -> None:
     if x == BE.A:
-        reveal_type(x)  # N: Revealed type is "builtins.object"
+        reveal_type(x)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
     else:
         reveal_type(x)  # N: Revealed type is "builtins.object"
 
@@ -3871,6 +3871,7 @@ def main(
     v_bytearray: bytearray,
     v_memoryview: memoryview,
     v_all: bytes | bytearray | memoryview,
+    v_object: object,
 ) -> None:
     if v_bytes == v_bytearray:
         reveal_type(v_bytes)  # N: Revealed type is "builtins.bytes"
@@ -3891,6 +3892,11 @@ def main(
     if v_all == v_memoryview:
         reveal_type(v_all)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
         reveal_type(v_memoryview)  # N: Revealed type is "builtins.memoryview"
+
+    if v_object == v_bytes:
+        reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
+    if v_object == b"asdf":
+        reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
 [builtins fixtures/primitives.pyi]
 
 [case testNarrowingBytesLikeNoPromotion]
@@ -3905,6 +3911,7 @@ def main(
     v_bytearray: bytearray,
     v_memoryview: memoryview,
     v_all: bytes | bytearray | memoryview,
+    v_object: object,
 ) -> None:
     if v_bytes == v_bytearray:
         reveal_type(v_bytes)  # N: Revealed type is "builtins.bytes"
@@ -3925,6 +3932,11 @@ def main(
     if v_all == v_memoryview:
         reveal_type(v_all)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
         reveal_type(v_memoryview)  # N: Revealed type is "builtins.memoryview"
+
+    if v_object == v_bytes:
+        reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
+    if v_object == b"asdf":
+        reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
 [builtins fixtures/primitives.pyi]
 
 
