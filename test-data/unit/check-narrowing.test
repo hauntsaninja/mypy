@@ -3861,6 +3861,7 @@ def f(x: bytes | None):
 [case testNarrowingBytesLikeWithPromotion]
 # flags: --strict-equality --warn-unreachable --strict-bytes
 from __future__ import annotations
+from typing import Any
 
 def check_test(x: bytes) -> None: ...
 check_test(bytearray(b"asdf"))  # E: Argument 1 to "check_test" has incompatible type "bytearray"; expected "bytes"
@@ -3871,6 +3872,7 @@ def main(
     v_memoryview: memoryview,
     v_all: bytes | bytearray | memoryview,
     v_object: object,
+    v_any: Any,
 ) -> None:
     if v_bytes == v_bytearray:
         reveal_type(v_bytes)  # N: Revealed type is "builtins.bytes"
@@ -3896,11 +3898,16 @@ def main(
         reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
     if v_object == b"asdf":
         reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
+    if v_any == v_bytes:
+        reveal_type(v_any)  # N: Revealed type is "Any"
+    if v_any == b"asdf":
+        reveal_type(v_any)  # N: Revealed type is "Any"
 [builtins fixtures/primitives.pyi]
 
 [case testNarrowingBytesLikeNoPromotion]
 # flags: --strict-equality --warn-unreachable --no-strict-bytes
 from __future__ import annotations
+from typing import Any
 
 def check_test(x: bytes) -> None: ...
 check_test(bytearray(b"asdf"))
@@ -3911,6 +3918,7 @@ def main(
     v_memoryview: memoryview,
     v_all: bytes | bytearray | memoryview,
     v_object: object,
+    v_any: Any,
 ) -> None:
     if v_bytes == v_bytearray:
         reveal_type(v_bytes)  # N: Revealed type is "builtins.bytes"
@@ -3936,6 +3944,10 @@ def main(
         reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
     if v_object == b"asdf":
         reveal_type(v_object)  # N: Revealed type is "builtins.bytes | builtins.bytearray | builtins.memoryview"
+    if v_any == v_bytes:
+        reveal_type(v_any)  # N: Revealed type is "Any"
+    if v_any == b"asdf":
+        reveal_type(v_any)  # N: Revealed type is "Any"
 [builtins fixtures/primitives.pyi]
 
 
