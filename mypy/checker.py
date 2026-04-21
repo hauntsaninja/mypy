@@ -7060,6 +7060,9 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         return if_map, else_map
 
     def broaden_equality_target_type(self, current_type: Type, target_type: Type) -> Type:
+        return target_type
+
+        # TODO: is this useful on primer?
         current_type = get_proper_type(current_type)
         if not (
             isinstance(current_type, Instance) and current_type.type.fullname == "builtins.object"
