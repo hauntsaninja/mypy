@@ -9683,6 +9683,7 @@ OPEN_VALUE_EQUALITY_DOMAINS: Final = {
         "builtins.complex",
     ),
 }
+OPEN_VALUE_EQUALITY_DOMAIN_NAMES: Final = frozenset(OPEN_VALUE_EQUALITY_DOMAINS)
 
 OPEN_VALUE_EQUALITY_TYPE_DOMAINS: Final = {
     fullname: domain
@@ -9704,9 +9705,7 @@ CLOSED_VALUE_EQUALITY_TYPE_DOMAINS: Final = {
 
 class EqualityValueInfo(NamedTuple):
     enum_types: set[str]
-    closed_domains: set[str]
-    open_domains: set[str]
-    domain_type_names: dict[str, set[str]]
+    value_domains: dict[str, set[str]]
     has_non_enum: bool
     is_top: bool
 
@@ -9715,18 +9714,9 @@ def closed_equality_domain_type_names(info: EqualityValueInfo) -> list[str]:
     return [
         fullname
         for domain, fullnames in CLOSED_VALUE_EQUALITY_DOMAINS.items()
-        if domain in info.closed_domains
+        if domain in info.value_domains
         for fullname in fullnames
     ]
-
-
-def has_distinct_equality_domain_types(
-    left_info: EqualityValueInfo, right_info: EqualityValueInfo, domains: set[str]
-) -> bool:
-    return any(
-        left_info.domain_type_names.get(domain) != right_info.domain_type_names.get(domain)
-        for domain in domains
-    )
 
 
 def partition_equality_ambiguous_types(
@@ -9763,14 +9753,15 @@ def is_equality_ambiguous_for_narrowing(left: Type, right: Type) -> bool:
     left_info = equality_value_info(left)
     right_info = equality_value_info(right)
 
-    if left_info.is_top:
-        return bool(right_info.enum_types and right_info.open_domains)
-    if right_info.is_top:
-        return bool(left_info.enum_types and left_info.open_domains)
+    if left_info.is_top or right_info.is_top:
+        other_info = right_info if left_info.is_top else left_info
+        return bool(
+            other_info.enum_types
+            and other_info.value_domains.keys() & OPEN_VALUE_EQUALITY_DOMAIN_NAMES
+        )
 
-    shared_closed_domains = left_info.closed_domains & right_info.closed_domains
-    shared_open_domains = left_info.open_domains & right_info.open_domains
-    if not (shared_closed_domains or shared_open_domains):
+    shared_domains = left_info.value_domains.keys() & right_info.value_domains.keys()
+    if not shared_domains:
         return False
 
     left_is_only_enum = bool(left_info.enum_types) and not left_info.has_non_enum
@@ -9778,12 +9769,9 @@ def is_equality_ambiguous_for_narrowing(left: Type, right: Type) -> bool:
     if left_is_only_enum and right_is_only_enum and left_info.enum_types == right_info.enum_types:
         return False
 
-    if shared_closed_domains and has_distinct_equality_domain_types(
-        left_info, right_info, shared_closed_domains
-    ):
-        return True
-    if shared_open_domains and has_distinct_equality_domain_types(
-        left_info, right_info, shared_open_domains
+    if any(
+        left_info.value_domains[domain] != right_info.value_domains[domain]
+        for domain in shared_domains
     ):
         return True
     if not (left_info.enum_types or right_info.enum_types):
@@ -9806,51 +9794,41 @@ def equality_value_info(t: Type) -> EqualityValueInfo:
         return equality_value_info(t.fallback)
     if isinstance(t, Instance):
         if t.type.fullname == "builtins.object":
-            return EqualityValueInfo(
-                set(), set(), set(), {}, has_non_enum=False, is_top=True
-            )
+            return EqualityValueInfo(set(), {}, has_non_enum=False, is_top=True)
 
-        open_domains = set()
-        closed_domains = set()
+        value_domains = {}
         for base in t.type.mro:
-            if domain := OPEN_VALUE_EQUALITY_TYPE_DOMAINS.get(base.fullname):
-                open_domains.add(domain)
-            if domain := CLOSED_VALUE_EQUALITY_TYPE_DOMAINS.get(base.fullname):
-                closed_domains.add(domain)
-        domain_type_names = {domain: {t.type.fullname} for domain in open_domains | closed_domains}
+            for type_domains in (
+                OPEN_VALUE_EQUALITY_TYPE_DOMAINS,
+                CLOSED_VALUE_EQUALITY_TYPE_DOMAINS,
+            ):
+                if domain := type_domains.get(base.fullname):
+                    value_domains[domain] = {t.type.fullname}
 
         enum_types = {t.type.fullname} if t.type.is_enum else set()
         return EqualityValueInfo(
             enum_types,
-            closed_domains,
-            open_domains,
-            domain_type_names,
+            value_domains,
             has_non_enum=not enum_types,
             is_top=False,
         )
     if isinstance(t, AnyType):
-        return EqualityValueInfo(set(), set(), set(), {}, has_non_enum=False, is_top=True)
-    return EqualityValueInfo(set(), set(), set(), {}, has_non_enum=False, is_top=False)
+        return EqualityValueInfo(set(), {}, has_non_enum=False, is_top=True)
+    return EqualityValueInfo(set(), {}, has_non_enum=False, is_top=False)
 
 
 def combine_equality_value_info(infos: Iterable[EqualityValueInfo]) -> EqualityValueInfo:
     enum_types: set[str] = set()
-    closed_domains: set[str] = set()
-    open_domains: set[str] = set()
-    domain_type_names: dict[str, set[str]] = defaultdict(set)
+    value_domains: dict[str, set[str]] = defaultdict(set)
     has_non_enum = False
     is_top = False
     for info in infos:
         enum_types.update(info.enum_types)
-        closed_domains.update(info.closed_domains)
-        open_domains.update(info.open_domains)
-        for domain, type_names in info.domain_type_names.items():
-            domain_type_names[domain].update(type_names)
+        for domain, type_names in info.value_domains.items():
+            value_domains[domain].update(type_names)
         has_non_enum = has_non_enum or info.has_non_enum
         is_top = is_top or info.is_top
-    return EqualityValueInfo(
-        enum_types, closed_domains, open_domains, dict(domain_type_names), has_non_enum, is_top
-    )
+    return EqualityValueInfo(enum_types, dict(value_domains), has_non_enum, is_top)
 
 
 def is_typeddict_type_context(lvalue_type: Type) -> bool:
