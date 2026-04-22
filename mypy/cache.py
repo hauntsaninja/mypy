@@ -69,13 +69,20 @@ from librt.internal import (
 from mypy_extensions import u8
 
 # High-level cache layout format
-CACHE_VERSION: Final = 2
+CACHE_VERSION: Final = 8
 
-SerializedError: _TypeAlias = tuple[str | None, int | str, int, int, int, str, str, str | None]
+# Type used internally to represent errors:
+#   (path, line, column, end_line, end_column, severity, message, code)
+ErrorTuple: _TypeAlias = tuple[str | None, int, int, int, int, str, str, str | None]
 
 
 class CacheMeta:
-    """Class representing cache metadata for a module."""
+    """Class representing cache metadata for a module.
+
+    This class represents the data known after checking module interface only, i.e.
+    this doesn't have: error messages and indirect dependencies, these are stored
+    in CacheMetaEx.
+    """
 
     def __init__(
         self,
@@ -91,11 +98,12 @@ class CacheMeta:
         suppressed: list[str],
         imports_ignored: dict[int, list[str]],
         options: dict[str, object],
+        suppressed_deps_opts: bytes,
         dep_prios: list[int],
         dep_lines: list[int],
         dep_hashes: list[bytes],
         interface_hash: bytes,
-        error_lines: list[SerializedError],
+        trans_dep_hash: bytes,
         version_id: str,
         ignore_all: bool,
         plugin_data: Any,
@@ -111,13 +119,14 @@ class CacheMeta:
         self.suppressed = suppressed  # dependencies that weren't imported
         self.imports_ignored = imports_ignored  # type ignore codes by line
         self.options = options  # build options snapshot
+        self.suppressed_deps_opts = suppressed_deps_opts  # hash of import-related options
         # dep_prios and dep_lines are both aligned with dependencies + suppressed
         self.dep_prios = dep_prios
         self.dep_lines = dep_lines
         # dep_hashes list is aligned with dependencies only
         self.dep_hashes = dep_hashes  # list of interface_hash for dependencies
         self.interface_hash = interface_hash  # hash representing the public interface
-        self.error_lines = error_lines
+        self.trans_dep_hash = trans_dep_hash  # hash of import structure (transitive)
         self.version_id = version_id  # mypy version for cache invalidation
         self.ignore_all = ignore_all  # if errors were ignored
         self.plugin_data = plugin_data  # config data from plugins
@@ -134,11 +143,12 @@ class CacheMeta:
             "suppressed": self.suppressed,
             "imports_ignored": {str(line): codes for line, codes in self.imports_ignored.items()},
             "options": self.options,
+            "suppressed_deps_opts": self.suppressed_deps_opts.hex(),
             "dep_prios": self.dep_prios,
             "dep_lines": self.dep_lines,
             "dep_hashes": [dep.hex() for dep in self.dep_hashes],
             "interface_hash": self.interface_hash.hex(),
-            "error_lines": self.error_lines,
+            "trans_dep_hash": self.trans_dep_hash.hex(),
             "version_id": self.version_id,
             "ignore_all": self.ignore_all,
             "plugin_data": self.plugin_data,
@@ -161,11 +171,12 @@ class CacheMeta:
                     int(line): codes for line, codes in meta["imports_ignored"].items()
                 },
                 options=meta["options"],
+                suppressed_deps_opts=bytes.fromhex(meta["suppressed_deps_opts"]),
                 dep_prios=meta["dep_prios"],
                 dep_lines=meta["dep_lines"],
                 dep_hashes=[bytes.fromhex(dep) for dep in meta["dep_hashes"]],
                 interface_hash=bytes.fromhex(meta["interface_hash"]),
-                error_lines=[tuple(err) for err in meta["error_lines"]],
+                trans_dep_hash=bytes.fromhex(meta["trans_dep_hash"]),
                 version_id=meta["version_id"],
                 ignore_all=meta["ignore_all"],
                 plugin_data=meta["plugin_data"],
@@ -187,11 +198,12 @@ class CacheMeta:
             write_int(data, line)
             write_str_list(data, codes)
         write_json(data, self.options)
+        write_bytes(data, self.suppressed_deps_opts)
         write_int_list(data, self.dep_prios)
         write_int_list(data, self.dep_lines)
         write_bytes_list(data, self.dep_hashes)
         write_bytes(data, self.interface_hash)
-        write_errors(data, self.error_lines)
+        write_bytes(data, self.trans_dep_hash)
         write_str(data, self.version_id)
         write_bool(data, self.ignore_all)
         # Plugin data may be not a dictionary, so we use
@@ -215,22 +227,78 @@ class CacheMeta:
                     read_int(data): read_str_list(data) for _ in range(read_int_bare(data))
                 },
                 options=read_json(data),
+                suppressed_deps_opts=read_bytes(data),
                 dep_prios=read_int_list(data),
                 dep_lines=read_int_list(data),
                 dep_hashes=read_bytes_list(data),
                 interface_hash=read_bytes(data),
-                error_lines=read_errors(data),
+                trans_dep_hash=read_bytes(data),
                 version_id=read_str(data),
                 ignore_all=read_bool(data),
                 plugin_data=read_json_value(data),
             )
-        except ValueError:
+        except (ValueError, AssertionError):
+            return None
+
+
+class CacheMetaEx:
+    """Class representing "implementation-specific" part of cache metadata for a module."""
+
+    def __init__(
+        self,
+        dependencies: list[str],
+        suppressed: list[str],
+        dep_hashes: list[bytes],
+        error_lines: list[ErrorTuple],
+    ) -> None:
+        self.dependencies = dependencies
+        self.suppressed = suppressed
+        self.dep_hashes = dep_hashes
+        self.error_lines = error_lines
+
+    def serialize(self) -> dict[str, Any]:
+        return {
+            "dependencies": self.dependencies,
+            "suppressed": self.suppressed,
+            "dep_hashes": [dep.hex() for dep in self.dep_hashes],
+            "error_lines": self.error_lines,
+        }
+
+    @classmethod
+    def deserialize(cls, meta: dict[str, Any]) -> CacheMetaEx | None:
+        try:
+            return CacheMetaEx(
+                dependencies=meta["dependencies"],
+                suppressed=meta["suppressed"],
+                dep_hashes=[bytes.fromhex(dep) for dep in meta["dep_hashes"]],
+                error_lines=[tuple(err) for err in meta["error_lines"]],
+            )
+        except (KeyError, ValueError):
+            return None
+
+    def write(self, data: WriteBuffer) -> None:
+        write_str_list(data, self.dependencies)
+        write_str_list(data, self.suppressed)
+        write_bytes_list(data, self.dep_hashes)
+        write_errors(data, self.error_lines)
+
+    @classmethod
+    def read(cls, data: ReadBuffer) -> CacheMetaEx | None:
+        try:
+            return CacheMetaEx(
+                dependencies=read_str_list(data),
+                suppressed=read_str_list(data),
+                dep_hashes=read_bytes_list(data),
+                error_lines=read_errors(data),
+            )
+        except (ValueError, AssertionError):
             return None
 
 
 # Always use this type alias to refer to type tags.
 Tag = u8
 
+# Note: all tags should be kept in sync with lib-rt/internal/librt_internal.c.
 # Primitives.
 LITERAL_FALSE: Final[Tag] = 0
 LITERAL_TRUE: Final[Tag] = 1
@@ -248,11 +316,15 @@ LIST_STR: Final[Tag] = 22
 LIST_BYTES: Final[Tag] = 23
 TUPLE_GEN: Final[Tag] = 24
 DICT_STR_GEN: Final[Tag] = 30
+DICT_INT_GEN: Final[Tag] = 31
 
 # Misc classes.
 EXTRA_ATTRS: Final[Tag] = 150
 DT_SPEC: Final[Tag] = 151
+# Four integers representing source file (line, column) range.
+LOCATION: Final[Tag] = 152
 
+RESERVED: Final[Tag] = 254
 END_TAG: Final[Tag] = 255
 
 
@@ -486,16 +558,13 @@ def write_json(data: WriteBuffer, value: dict[str, Any]) -> None:
         write_json_value(data, value[key])
 
 
-def write_errors(data: WriteBuffer, errs: list[SerializedError]) -> None:
+def write_errors(data: WriteBuffer, errs: list[ErrorTuple]) -> None:
     write_tag(data, LIST_GEN)
     write_int_bare(data, len(errs))
     for path, line, column, end_line, end_column, severity, message, code in errs:
         write_tag(data, TUPLE_GEN)
         write_str_opt(data, path)
-        if isinstance(line, str):
-            write_str(data, line)
-        else:
-            write_int(data, line)
+        write_int(data, line)
         write_int(data, column)
         write_int(data, end_line)
         write_int(data, end_column)
@@ -504,22 +573,15 @@ def write_errors(data: WriteBuffer, errs: list[SerializedError]) -> None:
         write_str_opt(data, code)
 
 
-def read_errors(data: ReadBuffer) -> list[SerializedError]:
+def read_errors(data: ReadBuffer) -> list[ErrorTuple]:
     assert read_tag(data) == LIST_GEN
     result = []
     for _ in range(read_int_bare(data)):
         assert read_tag(data) == TUPLE_GEN
-        path = read_str_opt(data)
-        tag = read_tag(data)
-        if tag == LITERAL_STR:
-            line: str | int = read_str_bare(data)
-        else:
-            assert tag == LITERAL_INT
-            line = read_int_bare(data)
         result.append(
             (
-                path,
-                line,
+                read_str_opt(data),
+                read_int(data),
                 read_int(data),
                 read_int(data),
                 read_int(data),

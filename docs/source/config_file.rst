@@ -432,7 +432,7 @@ Platform configuration
 
     Specifies the Python version used to parse and check the target
     program.  The string should be in the format ``MAJOR.MINOR`` --
-    for example ``3.9``.  The default is the version of the Python
+    for example ``3.10``.  The default is the version of the Python
     interpreter used to run mypy.
 
     This option may only be set in the global section (``[mypy]``).
@@ -719,10 +719,10 @@ section of the command line docs.
     :default: False
 
     By default, mypy won't allow a variable to be redefined with an
-    unrelated type. This *experimental* flag enables the redefinition of
-    unannotated variables with an arbitrary type. You will also need to enable
-    :confval:`local_partial_types`.
-    Example:
+    unrelated type. This flag enables the redefinition of unannotated
+    variables with an arbitrary type. This also requires
+    :confval:`local_partial_types`, which is enabled by default starting
+    from mypy 2.0. Example:
 
     .. code-block:: python
 
@@ -748,10 +748,22 @@ section of the command line docs.
                 # Type of "x" is "str" here.
                 ...
 
-    Note: We are planning to turn this flag on by default in a future mypy
-    release, along with :confval:`local_partial_types`.
+    Function arguments are special, changing their type within function body
+    is allowed even if they are annotated, but that annotation is used to infer
+    types of r.h.s. of all subsequent assignments. Such middle-ground semantics
+    provides good balance for majority of common use cases. For example:
 
-.. confval:: allow_redefinition
+    .. code-block:: python
+
+        def process(values: list[float]) -> None:
+            if not values:
+                values = [0, 0, 0]
+            reveal_type(values)  # Revealed type is list[float]
+
+    Note: We are planning to turn this flag on by default in a future mypy
+    release.
+
+.. confval:: allow_redefinition_old
 
     :type: boolean
     :default: False
@@ -777,14 +789,22 @@ section of the command line docs.
            items = "100"  # valid, items now has type str
            items = int(items)  # valid, items now has type int
 
-.. confval:: local_partial_types
+.. confval:: allow_redefinition
 
     :type: boolean
     :default: False
 
-    Disallows inferring variable type for ``None`` from two assignments in different scopes.
-    This is always implicitly enabled when using the :ref:`mypy daemon <mypy_daemon>`.
-    This will be enabled by default in a future mypy release.
+    An alias to :confval:`allow_redefinition_old`, in mypy v2.0 this will point to
+    :confval:`allow_redefinition_new`, and will eventually became the default.
+
+.. confval:: local_partial_types
+
+    :type: boolean
+    :default: True
+
+    This prevents inferring a variable type from an empty container (such as a list or
+    a dictionary) created at module top level or class body and updated in
+    a function. This must be enabled when using the :ref:`mypy daemon <mypy_daemon>`.
 
 .. confval:: disable_error_code
 
@@ -847,10 +867,10 @@ section of the command line docs.
 .. confval:: strict_bytes
 
    :type: boolean
-   :default: False
+   :default: True
 
-   Disable treating ``bytearray`` and ``memoryview`` as subtypes of ``bytes``.
-   This will be enabled by default in *mypy 2.0*.
+   If disabled, mypy treats ``bytearray`` and ``memoryview`` as subtypes of ``bytes``.
+   This has been enabled by default since mypy 2.0.
 
 .. confval:: strict
 
@@ -959,7 +979,7 @@ These options may only be set in the global section (``[mypy]``).
 .. confval:: sqlite_cache
 
     :type: boolean
-    :default: False
+    :default: True
 
     Use an `SQLite`_ database to store the cache.
 
@@ -1235,7 +1255,7 @@ of your repo (or append it to the end of an existing ``pyproject.toml`` file) an
     # mypy global options:
 
     [tool.mypy]
-    python_version = "3.9"
+    python_version = "3.10"
     warn_return_any = true
     warn_unused_configs = true
     exclude = [

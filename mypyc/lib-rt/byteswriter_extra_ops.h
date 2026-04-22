@@ -3,10 +3,12 @@
 
 #ifdef MYPYC_EXPERIMENTAL
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <Python.h>
 
-#include "strings/librt_strings.h"
+#include "mypyc_util.h"
+#include "strings/librt_strings_api.h"
 #include "strings/librt_strings_common.h"
 
 // BytesWriter: Length and capacity
@@ -119,6 +121,44 @@ CPyBytesWriter_WriteI64BE(PyObject *obj, int64_t value) {
     return CPY_NONE;
 }
 
+// BytesWriter: Write float operations
+
+static inline char
+CPyBytesWriter_WriteF32LE(PyObject *obj, double value) {
+    BytesWriterObject *self = (BytesWriterObject *)obj;
+    if (!CPyBytesWriter_EnsureSize(self, 4))
+        return CPY_NONE_ERROR;
+    BytesWriter_WriteF32LEUnsafe(self, (float)value);
+    return CPY_NONE;
+}
+
+static inline char
+CPyBytesWriter_WriteF32BE(PyObject *obj, double value) {
+    BytesWriterObject *self = (BytesWriterObject *)obj;
+    if (!CPyBytesWriter_EnsureSize(self, 4))
+        return CPY_NONE_ERROR;
+    BytesWriter_WriteF32BEUnsafe(self, (float)value);
+    return CPY_NONE;
+}
+
+static inline char
+CPyBytesWriter_WriteF64LE(PyObject *obj, double value) {
+    BytesWriterObject *self = (BytesWriterObject *)obj;
+    if (!CPyBytesWriter_EnsureSize(self, 8))
+        return CPY_NONE_ERROR;
+    BytesWriter_WriteF64LEUnsafe(self, value);
+    return CPY_NONE;
+}
+
+static inline char
+CPyBytesWriter_WriteF64BE(PyObject *obj, double value) {
+    BytesWriterObject *self = (BytesWriterObject *)obj;
+    if (!CPyBytesWriter_EnsureSize(self, 8))
+        return CPY_NONE_ERROR;
+    BytesWriter_WriteF64BEUnsafe(self, value);
+    return CPY_NONE;
+}
+
 // Bytes: Read integer operations
 
 // Helper function for bytes read error handling (negative index or out of range)
@@ -194,6 +234,56 @@ CPyBytes_ReadI64BE(PyObject *bytes_obj, int64_t index) {
     }
     const unsigned char *data = (const unsigned char *)PyBytes_AS_STRING(bytes_obj);
     return CPyBytes_ReadI64BEUnsafe(data + index);
+}
+
+// Bytes: Read float operations
+
+static inline double
+CPyBytes_ReadF32LE(PyObject *bytes_obj, int64_t index) {
+    // bytes_obj type is enforced by mypyc
+    Py_ssize_t size = PyBytes_GET_SIZE(bytes_obj);
+    if (unlikely(index < 0 || index > size - 4)) {
+        CPyBytes_ReadError(index, size);
+        return CPY_FLOAT_ERROR;
+    }
+    const unsigned char *data = (const unsigned char *)PyBytes_AS_STRING(bytes_obj);
+    return (double)CPyBytes_ReadF32LEUnsafe(data + index);
+}
+
+static inline double
+CPyBytes_ReadF32BE(PyObject *bytes_obj, int64_t index) {
+    // bytes_obj type is enforced by mypyc
+    Py_ssize_t size = PyBytes_GET_SIZE(bytes_obj);
+    if (unlikely(index < 0 || index > size - 4)) {
+        CPyBytes_ReadError(index, size);
+        return CPY_FLOAT_ERROR;
+    }
+    const unsigned char *data = (const unsigned char *)PyBytes_AS_STRING(bytes_obj);
+    return (double)CPyBytes_ReadF32BEUnsafe(data + index);
+}
+
+static inline double
+CPyBytes_ReadF64LE(PyObject *bytes_obj, int64_t index) {
+    // bytes_obj type is enforced by mypyc
+    Py_ssize_t size = PyBytes_GET_SIZE(bytes_obj);
+    if (unlikely(index < 0 || index > size - 8)) {
+        CPyBytes_ReadError(index, size);
+        return CPY_FLOAT_ERROR;
+    }
+    const unsigned char *data = (const unsigned char *)PyBytes_AS_STRING(bytes_obj);
+    return CPyBytes_ReadF64LEUnsafe(data + index);
+}
+
+static inline double
+CPyBytes_ReadF64BE(PyObject *bytes_obj, int64_t index) {
+    // bytes_obj type is enforced by mypyc
+    Py_ssize_t size = PyBytes_GET_SIZE(bytes_obj);
+    if (unlikely(index < 0 || index > size - 8)) {
+        CPyBytes_ReadError(index, size);
+        return CPY_FLOAT_ERROR;
+    }
+    const unsigned char *data = (const unsigned char *)PyBytes_AS_STRING(bytes_obj);
+    return CPyBytes_ReadF64BEUnsafe(data + index);
 }
 
 #endif // MYPYC_EXPERIMENTAL
