@@ -53,6 +53,35 @@ def f(x: Union[int, str, List]) -> None:
     reveal_type(x)  # N: Revealed type is "builtins.int | builtins.str | builtins.list[Any]"
 [builtins fixtures/isinstancelist.pyi]
 
+[case testIsinstanceNarrowsSequenceParentFromElement]
+# flags: --warn-unreachable
+from __future__ import annotations
+
+def f1(x: list[str] | list[tuple[int, int]]) -> None:
+    if isinstance(x[0], tuple):
+        reveal_type(x)  # N: Revealed type is "builtins.list[tuple[builtins.int, builtins.int]]"
+        reveal_type(x[0])  # N: Revealed type is "tuple[builtins.int, builtins.int]"
+    else:
+        reveal_type(x)  # N: Revealed type is "builtins.list[builtins.str]"
+        reveal_type(x[0])  # N: Revealed type is "builtins.str"
+
+def f2(x: tuple[str, ...] | tuple[tuple[int, int], ...]) -> None:
+    if isinstance(x[0], tuple):
+        reveal_type(x)  # N: Revealed type is "builtins.tuple[tuple[builtins.int, builtins.int], ...]"
+        reveal_type(x[0])  # N: Revealed type is "tuple[builtins.int, builtins.int]"
+    else:
+        reveal_type(x)  # N: Revealed type is "builtins.tuple[builtins.str, ...]"
+        reveal_type(x[0])  # N: Revealed type is "builtins.str"
+
+class A: ...
+class B: ...
+class C(A, B): ...
+
+def f3(x: list[A] | list[B]):
+    if isinstance(x[0], A):
+        reveal_type(x)  # N: Revealed type is "builtins.list[__main__.A]"
+[builtins fixtures/tuple.pyi]
+
 [case testClassAttributeInitialization]
 # flags: --warn-unreachable
 class A:
