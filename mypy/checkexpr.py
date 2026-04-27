@@ -32,7 +32,7 @@ from mypy.infer import ArgumentInferContext, infer_function_type_arguments, infe
 from mypy.literals import literal
 from mypy.lookup import lookup_fully_qualified
 from mypy.maptype import map_instance_to_supertype
-from mypy.meet import is_overlapping_types, narrow_declared_type
+from mypy.meet import is_overlapping_types, narrow_declared_type, meet_type_list
 from mypy.message_registry import ErrorMessage
 from mypy.messages import MessageBuilder, callable_name, format_type
 from mypy.nodes import (
@@ -3033,6 +3033,12 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
         elif any_causes_overload_ambiguity(matches, return_types, arg_types, arg_kinds, arg_names):
             # An argument of type or containing the type 'Any' caused ambiguity.
             # We try returning a precise type if we can. If not, we give up and just return 'Any'.
+            possible_return_type = meet_type_list(return_types)
+            possible_inferred_type = meet_type_list(inferred_types)
+            if not isinstance(get_proper_type(possible_return_type), UninhabitedType):
+                self.chk.store_types(type_maps[0])
+                return possible_return_type, possible_inferred_type
+
             if all_same_types(return_types):
                 self.chk.store_types(type_maps[0])
                 return return_types[0], inferred_types[0]

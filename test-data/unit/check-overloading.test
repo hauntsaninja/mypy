@@ -1651,7 +1651,7 @@ def f(x: object) -> object: ...
 def f(x): pass
 
 a: Any
-reveal_type(f(a))  # N: Revealed type is "Any"
+reveal_type(f(a))  # N: Revealed type is "builtins.int"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument2]
 from typing import overload, Any
@@ -1663,7 +1663,7 @@ def f(x: float) -> float: ...
 def f(x): pass
 
 a: Any
-reveal_type(f(a))  # N: Revealed type is "Any"
+reveal_type(f(a))  # N: Revealed type is "builtins.int"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument3]
 from typing import overload, Any
@@ -1688,15 +1688,15 @@ def f(x): pass
 
 a: Any
 # Any causes ambiguity
-reveal_type(f(a, 1, ''))  # N: Revealed type is "Any"
+reveal_type(f(a, 1, ''))  # N: Revealed type is "builtins.int"
 # Any causes no ambiguity
 reveal_type(f(1, a, a))  # N: Revealed type is "builtins.int"
 reveal_type(f('', a, a))  # N: Revealed type is "builtins.object"
 # Like above, but use keyword arguments.
-reveal_type(f(y=1, z='', x=a))  # N: Revealed type is "Any"
+reveal_type(f(y=1, z='', x=a))  # N: Revealed type is "builtins.int"
 reveal_type(f(y=a, z='', x=1))  # N: Revealed type is "builtins.int"
 reveal_type(f(z='', x=1, y=a))  # N: Revealed type is "builtins.int"
-reveal_type(f(z='', x=a, y=1))  # N: Revealed type is "Any"
+reveal_type(f(z='', x=a, y=1))  # N: Revealed type is "builtins.int"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument5]
 from typing import overload, Any, Union
@@ -1718,8 +1718,8 @@ def g(x: Union[int, float]) -> float: ...
 def g(x): pass
 
 a: Any
-reveal_type(f(a))  # N: Revealed type is "Any"
-reveal_type(g(a))  # N: Revealed type is "Any"
+reveal_type(f(a))  # N: Revealed type is "__main__.B"
+reveal_type(g(a))  # N: Revealed type is "builtins.int"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument6]
 from typing import overload, Any
@@ -1757,7 +1757,7 @@ def g(x): pass
 
 a: Any
 reveal_type(f(1, *a))  # N: Revealed type is "builtins.int"
-reveal_type(g(1, *a))  # N: Revealed type is "Any"
+reveal_type(g(1, *a))  # N: Revealed type is "builtins.int"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument8]
 from typing import overload, Any
@@ -1786,8 +1786,8 @@ a: Any
 b: List[Any]
 c: List[str]
 d: List[int]
-reveal_type(f(a)) # N: Revealed type is "builtins.list[Any]"
-reveal_type(f(b))  # N: Revealed type is "builtins.list[Any]"
+reveal_type(f(a)) # N: Revealed type is "builtins.list[builtins.int]"
+reveal_type(f(b))  # N: Revealed type is "builtins.list[builtins.int]"
 reveal_type(f(c))  # N: Revealed type is "builtins.list[Any]"
 reveal_type(f(d))  # N: Revealed type is "builtins.list[builtins.int]"
 
@@ -1836,7 +1836,7 @@ def f(x: str) -> str: ...
 def f(x): pass
 
 a: Any
-reveal_type(f(a))  # N: Revealed type is "Any"
+reveal_type(f(a))  # N: Revealed type is "builtins.str"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument13]
 from typing import Any, overload, TypeVar, Generic
@@ -1853,7 +1853,7 @@ class A(Generic[T]):
 
 i: Any
 a: A[Any]
-reveal_type(a.f(i))  # N: Revealed type is "Any"
+reveal_type(a.f(i))  # N: Revealed type is "__main__.A[Any]"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument14]
 from typing import Any, overload, TypeVar, Generic
@@ -1872,7 +1872,7 @@ class A(Generic[T]):
 
 i: Any
 a: A[Any]
-reveal_type(a.f(i))  # N: Revealed type is "__main__.Wrapper[Any]"
+reveal_type(a.f(i))  # N: Revealed type is "__main__.Wrapper[__main__.A[Any]]"
 
 [case testOverloadWithOverlappingItemsAndAnyArgument15]
 from typing import overload, Any, Union
@@ -4690,6 +4690,7 @@ x: D
 y: Union[D, Any]
 reveal_type(x.f(y))  # N: Revealed type is "__main__.D | Any"
 [out]
+main:15: note: Revealed type is "__main__.D"
 
 [case testManyUnionsInOverload]
 from typing import overload, TypeVar, Union
