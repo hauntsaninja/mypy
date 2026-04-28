@@ -2217,28 +2217,40 @@ _testDictOrUnionEdgeCases.py:10: note: Revealed type is "dict[str, dict[str, ...
 # flags: --strict-equality --warn-unreachable
 from typing import Mapping, AbstractSet
 
-def f1(x: Mapping[str, int]) -> None:
+def f1(x: Mapping[str, int], y: dict[str, int]) -> None:
     if isinstance(x, dict):
         reveal_type(x)
+
+    if x == y:
+        reveal_type(x)
+        reveal_type(y)
 
     if x == {}:
         reveal_type(x)
 
-def f2(x: AbstractSet[int]) -> None:
+def f2(x: AbstractSet[int], y: set[int]) -> None:
     if isinstance(x, set):
         reveal_type(x)
+
+    if x == y:
+        reveal_type(x)
+        reveal_type(y)
 
     if x == set():
         reveal_type(x)
 
-def f3(x: frozenset[str], y: set[str]):
+def f3(x: frozenset[int], y: set[int]):
     if x == y:
         reveal_type(x)
         reveal_type(y)
 [out]
 _testNarrowingMappingAndAbstractSet.py:6: note: Revealed type is "dict[Any, Any]"
 _testNarrowingMappingAndAbstractSet.py:9: note: Revealed type is "typing.Mapping[str, int]"
-_testNarrowingMappingAndAbstractSet.py:13: note: Revealed type is "set[Any]"
-_testNarrowingMappingAndAbstractSet.py:16: note: Revealed type is "typing.AbstractSet[int]"
-_testNarrowingMappingAndAbstractSet.py:20: note: Revealed type is "frozenset[str]"
-_testNarrowingMappingAndAbstractSet.py:21: note: Revealed type is "set[str]"
+_testNarrowingMappingAndAbstractSet.py:10: note: Revealed type is "dict[str, int]"
+_testNarrowingMappingAndAbstractSet.py:13: note: Revealed type is "typing.Mapping[str, int]"
+_testNarrowingMappingAndAbstractSet.py:17: note: Revealed type is "set[Any]"
+_testNarrowingMappingAndAbstractSet.py:20: note: Revealed type is "typing.AbstractSet[int]"
+_testNarrowingMappingAndAbstractSet.py:21: note: Revealed type is "set[int]"
+_testNarrowingMappingAndAbstractSet.py:24: note: Revealed type is "typing.AbstractSet[int]"
+_testNarrowingMappingAndAbstractSet.py:28: note: Revealed type is "frozenset[int]"
+_testNarrowingMappingAndAbstractSet.py:29: note: Revealed type is "set[int]"

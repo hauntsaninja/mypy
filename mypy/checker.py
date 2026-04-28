@@ -8924,10 +8924,7 @@ def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> Ty
     return result
 
 
-BUILTINS_CUSTOM_EQ_CHECKS: Final = {
-    "_collections_abc.dict_keys",
-    "_collections_abc.dict_items",
-}
+BUILTINS_CUSTOM_EQ_CHECKS: Final = {"_collections_abc.dict_keys", "_collections_abc.dict_items"}
 
 
 def has_custom_eq_checks(t: Type) -> bool:
