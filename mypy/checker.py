@@ -9731,6 +9731,8 @@ CLOSED_VALUE_EQUALITY_DOMAINS: Final = {
     "builtins.bytes": "builtins.bytes",
     "builtins.bytearray": "builtins.bytes",
     "builtins.memoryview": "builtins.bytes",
+    "typing.Mapping": "typing.Mapping",
+    "typing.AbstractSet": "typing.AbstractSet",
 }
 
 VALUE_EQUALITY_DOMAINS: Final = {**OPEN_VALUE_EQUALITY_DOMAINS, **CLOSED_VALUE_EQUALITY_DOMAINS}

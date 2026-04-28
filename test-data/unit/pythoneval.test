@@ -2212,3 +2212,25 @@ d3: A = d1 | d2
 reveal_type(d1 | d2)
 [out]
 _testDictOrUnionEdgeCases.py:10: note: Revealed type is "dict[str, dict[str, ... | int] | int]"
+
+[case testNarrowingMappingAndAbstractSet]
+from typing import Mapping, AbstractSet
+
+def f1(x: Mapping[str, int]) -> None:
+    if isinstance(x, dict):
+        reveal_type(x)
+
+    if x == {}:
+        reveal_type(x)
+
+def f2(x: AbstractSet[int]) -> None:
+    if isinstance(x, set):
+        reveal_type(x)
+
+    if x == set():
+        reveal_type(x)
+[out]
+_testNarrowingMappingAndAbstractSet.py:5: note: Revealed type is "dict[Any, Any]"
+_testNarrowingMappingAndAbstractSet.py:8: note: Revealed type is "typing.Mapping[str, int]"
+_testNarrowingMappingAndAbstractSet.py:12: note: Revealed type is "set[Any]"
+_testNarrowingMappingAndAbstractSet.py:15: note: Revealed type is "typing.AbstractSet[int]"
