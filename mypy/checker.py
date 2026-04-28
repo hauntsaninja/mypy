@@ -8925,7 +8925,6 @@ def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> Ty
 
 
 BUILTINS_CUSTOM_EQ_CHECKS: Final = {
-    "builtins.frozenset",
     "_collections_abc.dict_keys",
     "_collections_abc.dict_items",
 }
