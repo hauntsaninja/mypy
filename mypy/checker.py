@@ -8925,9 +8925,8 @@ def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> Ty
 
 
 def has_custom_eq_checks(t: Type) -> bool:
-    return (
-        custom_special_method(t, "__eq__", check_all=False)
-        or custom_special_method(t, "__ne__", check_all=False)
+    return custom_special_method(t, "__eq__", check_all=False) or custom_special_method(
+        t, "__ne__", check_all=False
     )
 
 
