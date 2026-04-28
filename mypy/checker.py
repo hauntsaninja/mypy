@@ -8924,20 +8924,10 @@ def reduce_and_conditional_type_maps(ms: list[TypeMap], *, use_meet: bool) -> Ty
     return result
 
 
-BUILTINS_CUSTOM_EQ_CHECKS: Final = {"_collections_abc.dict_keys", "_collections_abc.dict_items"}
-
-
 def has_custom_eq_checks(t: Type) -> bool:
     return (
         custom_special_method(t, "__eq__", check_all=False)
         or custom_special_method(t, "__ne__", check_all=False)
-        # custom_special_method has special casing for builtins.* and typing.* that make the
-        # above always return False. Some builtin collections still have equality behavior that
-        # crosses nominal type boundaries and isn't captured by VALUE_EQUALITY_TYPE_DOMAINS.
-        or (
-            isinstance(pt := get_proper_type(t), Instance)
-            and pt.type.fullname in BUILTINS_CUSTOM_EQ_CHECKS
-        )
     )
 
 
