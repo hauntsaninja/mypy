@@ -409,6 +409,16 @@ VEC FUNC(Append)(VEC vec, ITEM_C_TYPE x) {
     }
 }
 
+inline static int vec_memory_overlaps(const void *p1, Py_ssize_t len1,
+                                      const void *p2, Py_ssize_t len2) {
+    if (len1 <= 0 || len2 <= 0)
+        return 0;
+    uintptr_t a = (uintptr_t)p1, b = (uintptr_t)p2;
+    if (a <= b)
+        return b - a < (uintptr_t)len1;
+    return a - b < (uintptr_t)len2;
+}
+
 // Extend 'dst' by appending 'n' items from 'items', stealing 'dst'.
 // Caller guarantees n > 0 and that 'items' remains valid for the call.
 // If force_alloc is true, always allocate a new buffer even when dst has capacity.
@@ -471,8 +481,14 @@ VEC FUNC(Extend)(VEC vec, PyObject *iterable) {
     }
     if (buf_ok) {
         Py_ssize_t n = view.len / (Py_ssize_t)sizeof(ITEM_C_TYPE);
-        if (n > 0)
-            vec = vec_extend_items(vec, (const ITEM_C_TYPE *)view.buf, n, 0);
+        if (n > 0) {
+            Py_ssize_t dst_bytes = n * (Py_ssize_t)sizeof(ITEM_C_TYPE);
+            int force_alloc = vec.buf != NULL
+                && n <= VEC_CAP(vec) - vec.len
+                && vec_memory_overlaps(view.buf, view.len,
+                                       vec.buf->items + vec.len, dst_bytes);
+            vec = vec_extend_items(vec, (const ITEM_C_TYPE *)view.buf, n, force_alloc);
+        }
         PyBuffer_Release(&view);
         return vec;
     }
@@ -565,6 +581,46 @@ static PyMappingMethods vec_mapping_methods = {
     .mp_length = vec_length,
     .mp_subscript = vec_subscript,
 };
+
+#ifdef BUFFER_FORMAT
+static int vec_getbuffer(VEC_OBJECT *self, Py_buffer *view, int flags) {
+    if (view == NULL) {
+        PyErr_SetString(PyExc_BufferError,
+            "vec_getbuffer: view==NULL argument is obsolete");
+        return -1;
+    }
+    if ((flags & PyBUF_WRITABLE) == PyBUF_WRITABLE) {
+        PyErr_SetString(PyExc_BufferError, "Object is not writable");
+        view->obj = NULL;
+        return -1;
+    }
+
+    view->obj = (PyObject *)self;
+    Py_INCREF(self);
+    view->buf = (self->vec.buf != NULL) ? (void *)self->vec.buf->items : NULL;
+    view->len = self->vec.len * (Py_ssize_t)sizeof(ITEM_C_TYPE);
+    view->readonly = 1;
+    view->itemsize = sizeof(ITEM_C_TYPE);
+    view->format = NULL;
+    if ((flags & PyBUF_FORMAT) == PyBUF_FORMAT)
+        view->format = BUFFER_FORMAT;
+    view->ndim = 1;
+    view->shape = NULL;
+    if ((flags & PyBUF_ND) == PyBUF_ND)
+        view->shape = &self->vec.len;
+    view->strides = NULL;
+    if ((flags & PyBUF_STRIDES) == PyBUF_STRIDES)
+        view->strides = &view->itemsize;
+    view->suboffsets = NULL;
+    view->internal = NULL;
+
+    return 0;
+}
+
+static PyBufferProcs vec_buffer_procs = {
+    .bf_getbuffer = (getbufferproc)vec_getbuffer,
+};
+#endif
 
 static PySequenceMethods vec_sequence_methods = {
     .sq_item = vec_get_item,
@@ -667,6 +723,9 @@ PyTypeObject VEC_TYPE = {
     .tp_iter = vec_iter,
     .tp_as_sequence = &vec_sequence_methods,
     .tp_as_mapping = &vec_mapping_methods,
+#ifdef BUFFER_FORMAT
+    .tp_as_buffer = &vec_buffer_procs,
+#endif
     .tp_richcompare = vec_richcompare,
     .tp_methods = vec_methods,
 };
