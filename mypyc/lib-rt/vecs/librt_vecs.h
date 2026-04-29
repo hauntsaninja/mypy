@@ -7,6 +7,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdint.h>
+#include "mypyc_util.h"
 
 #ifdef MYPYC_EXPERIMENTAL
 
@@ -830,6 +831,27 @@ static inline PyObject *VecNested_BoxItem(VecNested v, VecNestedBufItem item) {
             return VecT_Box(v, item_type);
         }
     }
+}
+
+// Growth helpers
+
+static inline Py_ssize_t Vec_GrowCapacity(Py_ssize_t cap) {
+    if (unlikely(cap > (PY_SSIZE_T_MAX - 1) / 2)) {
+        // Allocation will fail at this size, but avoid overflow
+        return PY_SSIZE_T_MAX;
+    }
+    return 2 * cap + 1;
+}
+
+static inline Py_ssize_t Vec_GrowCapacityTo(Py_ssize_t cap, Py_ssize_t min_cap) {
+    while (cap < min_cap) {
+        if (unlikely(cap > (PY_SSIZE_T_MAX - 1) / 2)) {
+            cap = min_cap;
+            break;
+        }
+        cap = 2 * cap + 1;
+    }
+    return cap;
 }
 
 // Misc helpers
