@@ -6977,11 +6977,14 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                     if should_coerce_literals:
                         target_type = coerce_to_literal(target_type)
                     target = TypeRange(target_type, is_upper_bound=False)
+                    if_type, else_type = conditional_types(expr_type, [target], from_equality=True)
+                    if if_type is not None:
+                        if_type = make_simplified_union([if_type, expr_type])
+                    if_map, else_map = conditional_types_to_typemaps(
+                        operands[i], if_type, else_type
+                    )
+                    all_if_maps.append(if_map)
                     if is_target_for_value_narrowing(get_proper_type(target_type)):
-                        if_map, else_map = conditional_types_to_typemaps(
-                            operands[i],
-                            *conditional_types(expr_type, [target], from_equality=True),
-                        )
                         all_else_maps.append(else_map)
                 continue
 

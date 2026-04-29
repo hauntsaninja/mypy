@@ -31,9 +31,9 @@ m: Any
 
 match m:
     case 1:
-        reveal_type(m)  # N: Revealed type is "Any"
+        reveal_type(m)  # N: Revealed type is "Literal[1] | Any"
     case 2:
-        reveal_type(m)  # N: Revealed type is "Any"
+        reveal_type(m)  # N: Revealed type is "Literal[2] | Any"
     case other:
         reveal_type(other)  # N: Revealed type is "Any"
 

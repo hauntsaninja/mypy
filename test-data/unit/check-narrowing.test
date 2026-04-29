@@ -894,7 +894,7 @@ class Custom:
 def f1(x: Literal[1, 2, None], y: Custom):
     if 1 == x == y:
         reveal_type(x)   # N: Revealed type is "Literal[1]"
-        reveal_type(y)   # N: Revealed type is "__main__.Custom"
+        reveal_type(y)  # N: Revealed type is "__main__.Custom"
     else:
         reveal_type(x)   # N: Revealed type is "Literal[1] | Literal[2] | None"
         reveal_type(y)   # N: Revealed type is "__main__.Custom"
@@ -1775,7 +1775,7 @@ from typing import Any
 
 x: Any
 if len(x) == x:
-    reveal_type(x) # N: Revealed type is "Any"
+    reveal_type(x) # N: Revealed type is "builtins.int | Any"
 [builtins fixtures/len.pyi]
 
 [case testNarrowingLenTuple]
@@ -3276,12 +3276,12 @@ from typing import Any
 def f1(x: Any) -> None:
     if x is not None and x not in ["x"]:
         return
-    reveal_type(x)  # N: Revealed type is "Any"
+    reveal_type(x)  # N: Revealed type is "None | builtins.str | Any"
 
 def f2(x: Any) -> None:
     if x is not None and x != "x":
         return
-    reveal_type(x)  # N: Revealed type is "Any"
+    reveal_type(x)  # N: Revealed type is "None | Literal['x']? | Any"
 [builtins fixtures/tuple.pyi]
 
 [case testNarrowChainedContainment]
@@ -3318,7 +3318,7 @@ def f2(a: Any | None, b: str | None) -> None:
         reveal_type(b)  # N: Revealed type is "builtins.str | None"
 
     if (None is not a) and (a == b):
-        reveal_type(a)  # N: Revealed type is "Any"
+        reveal_type(a)  # N: Revealed type is "builtins.str | None | Any"
         reveal_type(b)  # N: Revealed type is "builtins.str | None"
 
 def f3(a: str | None, b: Any | None) -> None:
@@ -3899,9 +3899,9 @@ def main(
     if v_object == b"asdf":
         reveal_type(v_object)  # N: Revealed type is "Literal[b'asdf']?"
     if v_any == v_bytes:
-        reveal_type(v_any)  # N: Revealed type is "Any"
+        reveal_type(v_any)  # N: Revealed type is "builtins.bytes | Any"
     if v_any == b"asdf":
-        reveal_type(v_any)  # N: Revealed type is "Any"
+        reveal_type(v_any)  # N: Revealed type is "Literal[b'asdf']? | Any"
 [builtins fixtures/primitives.pyi]
 
 [case testNarrowingBytesLikeNoPromotion]
@@ -3945,9 +3945,9 @@ def main(
     if v_object == b"asdf":
         reveal_type(v_object)  # N: Revealed type is "Literal[b'asdf']?"
     if v_any == v_bytes:
-        reveal_type(v_any)  # N: Revealed type is "Any"
+        reveal_type(v_any)  # N: Revealed type is "builtins.bytes | Any"
     if v_any == b"asdf":
-        reveal_type(v_any)  # N: Revealed type is "Any"
+        reveal_type(v_any)  # N: Revealed type is "Literal[b'asdf']? | Any"
 [builtins fixtures/primitives.pyi]
 
 
