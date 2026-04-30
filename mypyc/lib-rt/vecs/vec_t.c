@@ -423,6 +423,54 @@ VecT VecT_ExtendVec(VecT dst, VecT src, size_t item_type) {
     return new;
 }
 
+// Convert vec to list, stealing 'v'.
+PyObject *VecT_ToList(VecT v) {
+    Py_ssize_t n = v.len;
+    PyObject *list = PyList_New(n);
+    if (list == NULL) {
+        VEC_DECREF(v);
+        return NULL;
+    }
+    if (n > 0 && Py_REFCNT(v.buf) == 1) {
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyList_SET_ITEM(list, i, v.buf->items[i]);
+            v.buf->items[i] = NULL;
+        }
+    } else {
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyObject *item = v.buf->items[i];
+            Py_INCREF(item);
+            PyList_SET_ITEM(list, i, item);
+        }
+    }
+    VEC_DECREF(v);
+    return list;
+}
+
+// Convert vec to tuple, stealing 'v'.
+PyObject *VecT_ToTuple(VecT v) {
+    Py_ssize_t n = v.len;
+    PyObject *tuple = PyTuple_New(n);
+    if (tuple == NULL) {
+        VEC_DECREF(v);
+        return NULL;
+    }
+    if (n > 0 && Py_REFCNT(v.buf) == 1) {
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyTuple_SET_ITEM(tuple, i, v.buf->items[i]);
+            v.buf->items[i] = NULL;
+        }
+    } else {
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyObject *item = v.buf->items[i];
+            Py_INCREF(item);
+            PyTuple_SET_ITEM(tuple, i, item);
+        }
+    }
+    VEC_DECREF(v);
+    return tuple;
+}
+
 // Remove item from 'vec', stealing 'vec'. Return 'vec' with item removed.
 VecT VecT_Remove(VecT v, PyObject *arg) {
     PyObject **items = v.buf->items;
@@ -770,6 +818,8 @@ VecTAPI Vec_TAPI = {
     VecT_FromIterable,
     VecT_Extend,
     VecT_ExtendVec,
+    VecT_ToList,
+    VecT_ToTuple,
 };
 
 #endif  // MYPYC_EXPERIMENTAL

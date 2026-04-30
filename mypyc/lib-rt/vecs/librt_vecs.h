@@ -282,6 +282,8 @@ typedef struct _VecI64API {
     VecI64 (*from_iterable)(PyObject *, int64_t);
     VecI64 (*extend)(VecI64, PyObject *);
     VecI64 (*extend_vec)(VecI64, VecI64);
+    PyObject *(*to_list)(VecI64);
+    PyObject *(*to_tuple)(VecI64);
 } VecI64API;
 
 // vec[i32] operations + type objects (stored in a capsule)
@@ -300,6 +302,8 @@ typedef struct _VecI32API {
     VecI32 (*from_iterable)(PyObject *, int64_t);
     VecI32 (*extend)(VecI32, PyObject *);
     VecI32 (*extend_vec)(VecI32, VecI32);
+    PyObject *(*to_list)(VecI32);
+    PyObject *(*to_tuple)(VecI32);
 } VecI32API;
 
 // vec[i16] operations + type objects (stored in a capsule)
@@ -318,6 +322,8 @@ typedef struct _VecI16API {
     VecI16 (*from_iterable)(PyObject *, int64_t);
     VecI16 (*extend)(VecI16, PyObject *);
     VecI16 (*extend_vec)(VecI16, VecI16);
+    PyObject *(*to_list)(VecI16);
+    PyObject *(*to_tuple)(VecI16);
 } VecI16API;
 
 // vec[u8] operations + type objects (stored in a capsule)
@@ -336,6 +342,8 @@ typedef struct _VecU8API {
     VecU8 (*from_iterable)(PyObject *, int64_t);
     VecU8 (*extend)(VecU8, PyObject *);
     VecU8 (*extend_vec)(VecU8, VecU8);
+    PyObject *(*to_list)(VecU8);
+    PyObject *(*to_tuple)(VecU8);
 } VecU8API;
 
 // vec[float] operations + type objects (stored in a capsule)
@@ -354,6 +362,8 @@ typedef struct _VecFloatAPI {
     VecFloat (*from_iterable)(PyObject *, int64_t);
     VecFloat (*extend)(VecFloat, PyObject *);
     VecFloat (*extend_vec)(VecFloat, VecFloat);
+    PyObject *(*to_list)(VecFloat);
+    PyObject *(*to_tuple)(VecFloat);
 } VecFloatAPI;
 
 // vec[bool] operations + type objects (stored in a capsule)
@@ -372,6 +382,8 @@ typedef struct _VecBoolAPI {
     VecBool (*from_iterable)(PyObject *, int64_t);
     VecBool (*extend)(VecBool, PyObject *);
     VecBool (*extend_vec)(VecBool, VecBool);
+    PyObject *(*to_list)(VecBool);
+    PyObject *(*to_tuple)(VecBool);
 } VecBoolAPI;
 
 #ifndef MYPYC_DECLARED_tuple_T2VOO
@@ -403,6 +415,8 @@ typedef struct _VecTAPI {
     VecT (*from_iterable)(size_t, PyObject *, int64_t);
     VecT (*extend)(VecT, PyObject *, size_t);
     VecT (*extend_vec)(VecT, VecT, size_t);
+    PyObject *(*to_list)(VecT);
+    PyObject *(*to_tuple)(VecT);
 } VecTAPI;
 
 
