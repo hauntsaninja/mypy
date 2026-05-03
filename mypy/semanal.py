@@ -8263,6 +8263,10 @@ def remove_imported_names_from_symtable(names: SymbolTable, module: str) -> None
 
 def make_any_non_explicit(t: Type) -> Type:
     """Replace all Any types within in with Any that has attribute 'explicit' set to False"""
+    if isinstance(t, AnyType):
+        if t.type_of_any == TypeOfAny.explicit:
+            return t.copy_modified(type_of_any=TypeOfAny.from_another_any, original_any=t)
+        return t
     return t.accept(MakeAnyNonExplicit())
 
 
