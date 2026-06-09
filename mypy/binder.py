@@ -28,7 +28,6 @@ from mypy.types import (
     ProperType,
     TupleType,
     Type,
-    TypeOfAny,
     TypeType,
     TypeVarType,
     UnionType,
@@ -74,6 +73,7 @@ class Frame:
     def __init__(self, id: int, conditional_frame: bool = False) -> None:
         self.id = id
         self.types: dict[Key, CurrentType] = {}
+        self.conditionally_narrowed_keys: set[Key] = set()
         self.unreachable = False
         self.conditional_frame = conditional_frame
         self.suppress_unreachable_warnings = False
@@ -302,8 +302,6 @@ class ConditionalTypeBinder:
         """Update the frame to reflect that each key will be updated
         as in one of the frames.  Return whether any item changes.
 
-        If a key is declared as AnyType, only update it if all the
-        options are the same.
         """
         all_reachable = all(not f.unreachable for f in frames)
         if not all_reachable:
@@ -329,9 +327,9 @@ class ConditionalTypeBinder:
                 # know anything about key in at least one possible frame.
                 continue
 
-            resulting_values = [x for x in resulting_values if x is not None]
+            filtered_resulting_values = [x for x in resulting_values if x is not None]
 
-            if all_reachable and all(not x.from_assignment for x in resulting_values):
+            if all_reachable and all(not x.from_assignment for x in filtered_resulting_values):
                 # Do not synthesize a new type if we encountered a conditional block
                 # (if, while or match-case) without assignments.
                 # See check-isinstance.test::testNoneCheckDoesNotMakeTypeVarOptional
@@ -343,57 +341,43 @@ class ConditionalTypeBinder:
             # a micro-optimization for --allow-redefinition.
             seen_types = set()
             resulting_types = []
-            for rv in resulting_values:
-                assert rv is not None
+            for rv in filtered_resulting_values:
                 if rv.type in seen_types:
                     continue
                 resulting_types.append(rv.type)
                 seen_types.add(rv.type)
 
-            type = resulting_types[0]
-            declaration_type = get_proper_type(self.declarations.get(key))
-            if isinstance(declaration_type, AnyType):
-                # At this point resulting values can't contain None, see continue above
-                if not all(is_same_type(type, t) for t in resulting_types[1:]):
-                    type = AnyType(TypeOfAny.from_another_any, source_any=declaration_type)
+            declaration_type = self.declarations.get(key)
+            if len(resulting_types) == 1:
+                # This is to avoid calling get_proper_type() unless needed, as this may
+                # interfere with our (hacky) TypeGuard support.
+                type = resulting_types[0]
             else:
-                possible_types = []
-                for t in resulting_types:
-                    assert t is not None
-                    possible_types.append(t)
-                if len(possible_types) == 1:
-                    # This is to avoid calling get_proper_type() unless needed, as this may
-                    # interfere with our (hacky) TypeGuard support.
-                    type = possible_types[0]
-                else:
-                    type = make_simplified_union(possible_types)
-                    # Legacy guard for corner case when the original type is TypeVarType.
-                    if isinstance(declaration_type, TypeVarType) and not is_subtype(
-                        type, declaration_type
-                    ):
-                        type = declaration_type
-                    # Try simplifying resulting type for unions involving variadic tuples.
-                    # Technically, everything is still valid without this step, but if we do
-                    # not do this, this may create long unions after exiting an if check like:
-                    #     x: tuple[int, ...]
-                    #     if len(x) < 10:
-                    #         ...
-                    # We want the type of x to be tuple[int, ...] after this block (if it is
-                    # still equivalent to such type).
-                    if isinstance(type, UnionType):
-                        type = collapse_variadic_union(type)
-                    if (
-                        old_semantics
-                        and isinstance(type, ProperType)
-                        and isinstance(type, UnionType)
-                    ):
-                        # Simplify away any extra Any's that were added to the declared
-                        # type when popping a frame.
-                        simplified = UnionType.make_union(
-                            [t for t in type.items if not isinstance(get_proper_type(t), AnyType)]
-                        )
-                        if simplified == self.declarations[key]:
-                            type = simplified
+                type = make_simplified_union(resulting_types)
+                # Legacy guard for corner case when the original type is TypeVarType.
+                proper_declaration_type = get_proper_type(declaration_type)
+                if isinstance(proper_declaration_type, TypeVarType) and not is_subtype(
+                    type, proper_declaration_type
+                ):
+                    type = proper_declaration_type
+                # Try simplifying resulting type for unions involving variadic tuples.
+                # Technically, everything is still valid without this step, but if we do
+                # not do this, this may create long unions after exiting an if check like:
+                #     x: tuple[int, ...]
+                #     if len(x) < 10:
+                #         ...
+                # We want the type of x to be tuple[int, ...] after this block (if it is
+                # still equivalent to such type).
+                if isinstance(type, UnionType):
+                    type = collapse_variadic_union(type)
+                if old_semantics and isinstance(type, ProperType) and isinstance(type, UnionType):
+                    # Simplify away any extra Any's that were added to the declared
+                    # type when popping a frame.
+                    simplified = UnionType.make_union(
+                        [t for t in type.items if not isinstance(get_proper_type(t), AnyType)]
+                    )
+                    if simplified == self.declarations[key]:
+                        type = simplified
             if (
                 current_value is None
                 or not is_same_type(type, current_value.type)
@@ -483,6 +467,8 @@ class ConditionalTypeBinder:
             return
         if not literal(expr):
             return
+        key = literal_hash(expr)
+        assert key is not None
         self.invalidate_dependencies(expr)
 
         if declared_type is None:
@@ -531,6 +517,8 @@ class ConditionalTypeBinder:
             # has an explicit `Any` type annotation.
             if isinstance(expr, RefExpr) and isinstance(expr.node, Var) and expr.node.is_inferred:
                 self.put(expr, type)
+            elif any(key in f.conditionally_narrowed_keys for f in self.frames):
+                self.put(expr, type)
             else:
                 self.put(expr, declared_type)
         else:
@@ -553,6 +541,16 @@ class ConditionalTypeBinder:
         assert key is not None
         for dep in self.dependencies.get(key, set()):
             self._cleanse_key(dep)
+
+    def record_conditional_type_map(self, type_map: dict[Expression, Type] | None) -> None:
+        """Record expressions that are mentioned by the active conditional."""
+        if type_map is None:
+            return
+        for expr in type_map:
+            if self.can_put_directly(expr):
+                key = literal_hash(expr)
+                assert key is not None
+                self.frames[-1].conditionally_narrowed_keys.add(key)
 
     def allow_jump(self, index: int) -> None:
         # self.frames and self.options_on_return have different lengths
