@@ -209,10 +209,6 @@ class ErrorWatcher:
     out by one of the ErrorWatcher instances.
     """
 
-    # public attribute for the special treatment of `reveal_type` by
-    # `MessageBuilder.reveal_type`:
-    filter_revealed_type: bool
-
     def __init__(
         self,
         errors: Errors,
@@ -222,19 +218,23 @@ class ErrorWatcher:
         filter_deprecated: bool = False,
         filter_revealed_type: bool = False,
     ) -> None:
-        self.errors = errors
+        self.errors: Final = errors
+
+        self._filter: Final = filter_errors
+        self._filtered: Final[list[ErrorInfo] | None] = [] if save_filtered_errors else None
+        self._filter_deprecated: Final = filter_deprecated
+        # public attribute for the special treatment of `reveal_type` by
+        # `MessageBuilder.reveal_type`
+        self.filter_revealed_type: Final = filter_revealed_type
+
         self._has_new_errors = False
-        self._filter = filter_errors
-        self._filter_deprecated = filter_deprecated
-        self.filter_revealed_type = filter_revealed_type
-        self._filtered: list[ErrorInfo] | None = [] if save_filtered_errors else None
 
     def __enter__(self) -> Self:
-        self.errors._watchers.append(self)
+        self.errors.add_watcher(self)
         return self
 
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> Literal[False]:
-        last = self.errors._watchers.pop()
+        last = self.errors.pop_watcher()
         assert last == self
         return False
 
@@ -752,6 +752,12 @@ class Errors:
         )
         self._add_error_info(file, info)
 
+    def add_watcher(self, watcher: ErrorWatcher) -> None:
+        self._watchers.append(watcher)
+
+    def pop_watcher(self) -> ErrorWatcher:
+        return self._watchers.pop()
+
     def get_watchers(self) -> Iterator[ErrorWatcher]:
         """Yield the `ErrorWatcher` stack from top to bottom."""
         i = len(self._watchers)
@@ -987,6 +993,16 @@ class Errors:
     def is_errors_for_file(self, file: str) -> bool:
         """Are there any errors for the given file?"""
         return file in self.error_info_map and file not in self.ignored_files
+
+    def can_skip_diagnostics(self) -> bool:
+        """Return whether we can skip generating a diagnostic."""
+        if self._watchers:
+            return False
+        if self.file in self.ignored_files:
+            return True
+        if self.options.ignore_errors:
+            return True
+        return False
 
     def prefer_simple_messages(self) -> bool:
         """Should we generate simple/fast error messages?

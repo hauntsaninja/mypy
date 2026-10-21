@@ -5065,7 +5065,8 @@ def process_stale_scc_implementation(
         checker = graph[id].type_checker()
         # Optimization: if this is a 3rd party library, or we ignore errors
         # otherwise in this module, skip the implementations altogether.
-        if checker.can_skip_diagnostics and not checker.options.preserve_asts:
+        checker.errors.set_file(checker.path, checker.tree.fullname, options=checker.options)
+        if checker.errors.can_skip_diagnostics() and not checker.options.preserve_asts:
             unfinished_modules.discard(id)
             graph[id].finish_passes()
             continue

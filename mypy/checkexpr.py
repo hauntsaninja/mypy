@@ -3839,11 +3839,14 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                             self.msg.unsupported_operand_types("in", left_type, right_type, e)
                         else:
                             container_type = UnionType.make_union(container_types)
-                            if not self.chk.can_skip_diagnostics and self.dangerous_comparison(
-                                left_type,
-                                container_type,
-                                original_container=right_type,
-                                prefer_literal=False,
+                            if (
+                                not self.msg.errors.can_skip_diagnostics()
+                                and self.dangerous_comparison(
+                                    left_type,
+                                    container_type,
+                                    original_container=right_type,
+                                    prefer_literal=False,
+                                )
                             ):
                                 self.msg.dangerous_comparison(
                                     left_type, container_type, "container", e
@@ -3862,7 +3865,7 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                 # testCustomEqCheckStrictEquality for an example.
                 if not w.has_new_errors() and operator in ("==", "!="):
                     right_type = self.accept(right)
-                    if not self.chk.can_skip_diagnostics and self.dangerous_comparison(
+                    if not self.msg.errors.can_skip_diagnostics() and self.dangerous_comparison(
                         left_type, right_type
                     ):
                         # Show the most specific literal types possible
@@ -3874,7 +3877,7 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                 right_type = self.accept(right)  # validate the right operand
                 sub_result = self.bool_type()
                 if (
-                    not self.chk.can_skip_diagnostics
+                    not self.msg.errors.can_skip_diagnostics()
                     and self.dangerous_comparison(left_type, right_type, identity_check=True)
                     # Allow dangerous identity comparisons with objects explicitly typed as Any
                     and not (
