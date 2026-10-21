@@ -1117,7 +1117,7 @@ class BuildManager:
                     self.log(f"Parsing {state.xpath} ({state.id})")
                     ignore_errors = state.ignore_all or state.options.ignore_errors
                     if ignore_errors:
-                        self.errors.ignored_files.add(state.xpath)
+                        self.errors.ignore_file(state.xpath)
                     futures.append(executor.submit(state.parse_file_inner, state.source))
                     parallel_parsed_states.append(state)
                     parallel_parsed_states_set.add(state)
@@ -3288,7 +3288,7 @@ class State:
             self.manager.log(f"Parsing {self.xpath} ({self.id})")
             ignore_errors = self.ignore_all or self.options.ignore_errors
             if ignore_errors:
-                self.manager.errors.ignored_files.add(self.xpath)
+                self.manager.errors.ignore_file(self.xpath)
             with self.wrap_context():
                 manager.errors.set_file(self.xpath, self.id, options=self.options)
                 if raw_data is not None:
@@ -5066,7 +5066,7 @@ def process_stale_scc_implementation(
         # Optimization: if this is a 3rd party library, or we ignore errors
         # otherwise in this module, skip the implementations altogether.
         checker.errors.set_file(checker.path, checker.tree.fullname, options=checker.options)
-        if checker.errors.can_skip_diagnostics() and not checker.options.preserve_asts:
+        if checker.errors.can_skip_diagnostics and not checker.options.preserve_asts:
             unfinished_modules.discard(id)
             graph[id].finish_passes()
             continue

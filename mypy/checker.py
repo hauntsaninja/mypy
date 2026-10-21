@@ -901,7 +901,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                     # Type check initialization expressions.
                     # TODO: initializers can infer types if they contain a walrus,
                     # it may be not safe to optimize them away completely.
-                    if not self.errors.can_skip_diagnostics():
+                    if not self.errors.can_skip_diagnostics:
                         self.check_default_params(fdef.func)
                     if self.recurse_into_functions or fdef.func.def_or_infer_vars:
                         with (
@@ -949,7 +949,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                 )
             defn.type = Overloaded([var_type])
         # Check override validity after we analyzed current definition.
-        if not self.errors.can_skip_diagnostics() and defn.info:
+        if not self.errors.can_skip_diagnostics and defn.info:
             found_method_base_classes = self.check_method_override(defn)
             if (
                 defn.is_explicit_override
@@ -1030,7 +1030,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         # At this point we should have set the impl already, and all remaining
         # items are decorators
 
-        if self.errors.can_skip_diagnostics():
+        if self.errors.can_skip_diagnostics:
             return
 
         # Compute some info about the implementation (if it exists) for use below
@@ -1355,7 +1355,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
 
     def visit_func_def(self, defn: FuncDef) -> None:
         # Type check initialization expressions as part of top-level.
-        if not self.errors.can_skip_diagnostics():
+        if not self.errors.can_skip_diagnostics:
             self.check_default_params(defn)
         if defn.original_def:
             # Override previous definition (may affect externally visible types).
@@ -1368,7 +1368,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
     def visit_func_def_impl(self, defn: FuncDef) -> None:
         with self.tscope.function_scope(defn), self.set_recurse_into_functions():
             self.check_func_item(defn, name=defn.name)
-            if not self.errors.can_skip_diagnostics():
+            if not self.errors.can_skip_diagnostics:
                 if defn.info:
                     if not defn.is_overload and not defn.is_decorated:
                         # If the definition is the implementation for an
@@ -1484,7 +1484,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                 # We may be checking a function definition or an anonymous
                 # function. In the first case, set up another reference with the
                 # precise type.
-                if not self.errors.can_skip_diagnostics():
+                if not self.errors.can_skip_diagnostics:
                     self.check_funcdef_item(item, typ, name, defn=defn, original_typ=original_typ)
 
                 # Push return type.
@@ -1580,7 +1580,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                     # if during semantic analysis we found that there are no attributes
                     # defined via self here.
                     if (
-                        not self.errors.can_skip_diagnostics()
+                        not self.errors.can_skip_diagnostics
                         or self.options.preserve_asts
                         or not isinstance(defn, FuncDef)
                         or defn.def_or_infer_vars
@@ -1620,7 +1620,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                 )
 
                 if (
-                    self.errors.can_skip_diagnostics()
+                    self.errors.can_skip_diagnostics
                     # Ignore plugin generated methods, these usually don't need any bodies.
                     or (
                         defn.info is not FUNC_NO_INFO
@@ -1794,7 +1794,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
             )
             return False
 
-        if self.errors.can_skip_diagnostics():
+        if self.errors.can_skip_diagnostics:
             return True
 
         arg_type = func.arg_types[0]
@@ -2358,7 +2358,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
 
         Return a list of base classes which contain an attribute with the method name.
         """
-        if self.errors.can_skip_diagnostics():
+        if self.errors.can_skip_diagnostics:
             return None
         # Check against definitions in base classes.
         check_override_compatibility = (
@@ -2848,7 +2848,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                 with self.scope.push_class(defn.info):
                     self.accept(defn.defs)
             self.binder = old_binder
-            if not self.errors.can_skip_diagnostics():
+            if not self.errors.can_skip_diagnostics:
                 if not (defn.info.typeddict_type or defn.info.tuple_type or defn.info.is_enum):
                     # If it is not a normal class (not a special form) check class keywords.
                     self.check_init_subclass(defn)
@@ -3098,7 +3098,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
         if they are actually covariant/contravariant, since this may break
         transitivity of subtyping, see PEP 544.
         """
-        if self.errors.can_skip_diagnostics():
+        if self.errors.can_skip_diagnostics:
             return
         if defn.type_args is not None:
             # Using new-style syntax (PEP 695), so variance will be inferred
@@ -3651,7 +3651,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
             if (
                 isinstance(lvalue, RefExpr)
                 and not (isinstance(lvalue, NameExpr) and lvalue.name == "__match_args__")
-                and not self.errors.can_skip_diagnostics()
+                and not self.errors.can_skip_diagnostics
             ):
                 # We check override here at the end after storing the inferred type, since
                 # override check will try to access the current attribute via symbol tables
@@ -5901,7 +5901,7 @@ class TypeChecker(NodeVisitor[None], TypeCheckerSharedApi, SplittingVisitor):
                 defn.type = typ.copy_modified(ret_type=ret_type)
 
         # Type check initialization expressions as part of top-level.
-        if not self.errors.can_skip_diagnostics():
+        if not self.errors.can_skip_diagnostics:
             self.check_default_params(defn)
 
         if self.recurse_into_functions or e.func.def_or_infer_vars:

@@ -3840,7 +3840,7 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                         else:
                             container_type = UnionType.make_union(container_types)
                             if (
-                                not self.msg.errors.can_skip_diagnostics()
+                                not self.msg.errors.can_skip_diagnostics
                                 and self.dangerous_comparison(
                                     left_type,
                                     container_type,
@@ -3865,7 +3865,7 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                 # testCustomEqCheckStrictEquality for an example.
                 if not w.has_new_errors() and operator in ("==", "!="):
                     right_type = self.accept(right)
-                    if not self.msg.errors.can_skip_diagnostics() and self.dangerous_comparison(
+                    if not self.msg.errors.can_skip_diagnostics and self.dangerous_comparison(
                         left_type, right_type
                     ):
                         # Show the most specific literal types possible
@@ -3877,7 +3877,7 @@ class ExpressionChecker(ExpressionVisitor[Type], ExpressionCheckerSharedApi):
                 right_type = self.accept(right)  # validate the right operand
                 sub_result = self.bool_type()
                 if (
-                    not self.msg.errors.can_skip_diagnostics()
+                    not self.msg.errors.can_skip_diagnostics
                     and self.dangerous_comparison(left_type, right_type, identity_check=True)
                     # Allow dangerous identity comparisons with objects explicitly typed as Any
                     and not (

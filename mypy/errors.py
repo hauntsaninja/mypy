@@ -528,6 +528,7 @@ class Errors:
         self._watchers = []
         self.global_watcher = False
         self.recorded = defaultdict(list)
+        self.can_skip_diagnostics = self._calculate_can_skip_diagnostics()
 
     def reset(self) -> None:
         self.initialize()
@@ -561,13 +562,18 @@ class Errors:
         self.target_module = module
         self.scope = scope
         self.options = options
+        self.can_skip_diagnostics = self._calculate_can_skip_diagnostics()
 
     def set_file_ignored_lines(
         self, file: str, ignored_lines: dict[int, list[str]], ignore_all: bool = False
     ) -> None:
         self.ignored_lines[file] = ignored_lines
         if ignore_all:
-            self.ignored_files.add(file)
+            self.ignore_file(file)
+
+    def ignore_file(self, file: str) -> None:
+        self.ignored_files.add(file)
+        self.can_skip_diagnostics = self._calculate_can_skip_diagnostics()
 
     def set_skipped_lines(self, file: str, skipped_lines: set[int]) -> None:
         self.skipped_lines[file] = skipped_lines
@@ -754,9 +760,12 @@ class Errors:
 
     def add_watcher(self, watcher: ErrorWatcher) -> None:
         self._watchers.append(watcher)
+        self.can_skip_diagnostics = False
 
     def pop_watcher(self) -> ErrorWatcher:
-        return self._watchers.pop()
+        watcher = self._watchers.pop()
+        self.can_skip_diagnostics = self._calculate_can_skip_diagnostics()
+        return watcher
 
     def get_watchers(self) -> Iterator[ErrorWatcher]:
         """Yield the `ErrorWatcher` stack from top to bottom."""
@@ -994,7 +1003,7 @@ class Errors:
         """Are there any errors for the given file?"""
         return file in self.error_info_map and file not in self.ignored_files
 
-    def can_skip_diagnostics(self) -> bool:
+    def _calculate_can_skip_diagnostics(self) -> bool:
         """Return whether we can skip generating a diagnostic."""
         if self._watchers:
             return False
